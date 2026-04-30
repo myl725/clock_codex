@@ -1,0 +1,4 @@
+interface:
+  display_name: "Clock Codex Governance"
+  short_description: "Project governance summary for clock_codex"
+  default_prompt: "Use this skill when working on the clock_codex ESP-IDF project so changes follow the repo's architecture, coding, and migration rules."
