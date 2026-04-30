@@ -23,10 +23,13 @@ Last updated for the milestone:
   - 3-sample median filtering
   - repeated init guards
 - Governance documents and local skill are already present in:
+  - `README.md`
   - `docs/architecture.md`
   - `docs/coding-rules.md`
   - `docs/migration-rules.md`
   - `docs/versioning.md`
+  - `docs/runbook.md`
+  - `docs/hardware-wiring.md`
   - `.codex/skills/clock-codex-governance/`
 
 ## Audio / Speech Status
@@ -207,8 +210,10 @@ If a future session needs to continue from here, start by reading:
 1. `docs/current-status.md`
 2. `docs/architecture.md`
 3. `docs/versioning.md`
-4. `components/app_services/app_speech_service.c`
-5. `platformio.ini`
+4. `docs/runbook.md`
+5. `docs/hardware-wiring.md`
+6. `components/app_services/app_speech_service.c`
+7. `platformio.ini`
 
 Then verify whether the intent is:
 
