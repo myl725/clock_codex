@@ -26,12 +26,12 @@ typedef struct {
 } speech_phrase_t;
 
 static const char *TAG = "app_speech";
-static const char *WAKE_HINT_TEXT = "嗨乐鑫";
+static const char *WAKE_HINT_TEXT = "Hi Lexin";
 static const speech_phrase_t SPEECH_PHRASES[] = {
-    {1, "ni hao xiao zhong", "你好，小钟"},
-    {2, "xian shi shi jian", "显示时间"},
-    {3, "jin ru ce shi", "进入测试"},
-    {4, "jie shu ce shi", "结束测试"},
+    {1, "ni hao xiao zhong", "Hello, Xiao Zhong"},
+    {2, "xian shi shi jian", "Show Time"},
+    {3, "jin ru ce shi", "Enter Test"},
+    {4, "jie shu ce shi", "Exit Test"},
 };
 
 static const esp_afe_sr_iface_t *s_afe_handle;
@@ -52,7 +52,7 @@ static const char *app_speech_phrase_to_text(int command_id)
         }
     }
 
-    return "未映射命令";
+    return "Unmapped command";
 }
 
 static void app_speech_set_snapshot_locked(
@@ -94,12 +94,22 @@ static void app_speech_update_snapshot(
 
 static void app_speech_set_level(uint8_t level_percent)
 {
+    uint16_t left_peak = 0;
+    uint16_t right_peak = 0;
+    uint32_t raw_peak = 0;
+
     if (s_snapshot_mutex == NULL) {
         return;
     }
 
+    audio_input_get_debug_peaks(&left_peak, &right_peak);
+    raw_peak = audio_input_get_debug_raw_peak();
+
     xSemaphoreTake(s_snapshot_mutex, portMAX_DELAY);
     s_snapshot.level_percent = level_percent;
+    s_snapshot.left_peak = left_peak;
+    s_snapshot.right_peak = right_peak;
+    s_snapshot.raw_peak = raw_peak;
     xSemaphoreGive(s_snapshot_mutex);
 }
 
@@ -136,7 +146,7 @@ static void app_speech_feed_task(void *arg)
     int16_t *feed_buffer = calloc(feed_sample_count, sizeof(int16_t));
 
     if (feed_buffer == NULL) {
-        app_speech_update_snapshot(APP_SPEECH_STATE_ERROR, "内存不足", "feed buffer alloc failed", 0.0f, -1);
+        app_speech_update_snapshot(APP_SPEECH_STATE_ERROR, "Out of memory", "feed buffer alloc failed", 0.0f, -1);
         vTaskDelete(NULL);
         return;
     }
@@ -145,7 +155,7 @@ static void app_speech_feed_task(void *arg)
         size_t samples_read = 0;
         esp_err_t err = audio_input_read(feed_buffer, feed_sample_count, &samples_read);
         if (err != ESP_OK || samples_read != feed_sample_count) {
-            app_speech_update_snapshot(APP_SPEECH_STATE_ERROR, "麦克风读取失败", esp_err_to_name(err), 0.0f, -1);
+            app_speech_update_snapshot(APP_SPEECH_STATE_ERROR, "Mic read failed", esp_err_to_name(err), 0.0f, -1);
             break;
         }
 
@@ -178,19 +188,19 @@ static void app_speech_detect_task(void *arg)
     (void)arg;
 
     bool wakeup_active = false;
-    app_speech_update_snapshot(APP_SPEECH_STATE_LISTENING, "等待唤醒", "先说：嗨乐鑫", 0.0f, -1);
+    app_speech_update_snapshot(APP_SPEECH_STATE_LISTENING, "Waiting for wake word", "Say: Hi Lexin", 0.0f, -1);
 
     while (s_service_running) {
         afe_fetch_result_t *result = s_afe_handle->fetch(s_afe_data);
         if (result == NULL || result->ret_value == ESP_FAIL) {
-            app_speech_update_snapshot(APP_SPEECH_STATE_ERROR, "AFE fetch 失败", "请检查模型和麦克风连线", 0.0f, -1);
+            app_speech_update_snapshot(APP_SPEECH_STATE_ERROR, "AFE fetch failed", "Check models and mic wiring", 0.0f, -1);
             break;
         }
 
         if (result->wakeup_state == WAKENET_DETECTED) {
             wakeup_active = true;
             s_multinet->clean(s_multinet_data);
-            app_speech_update_snapshot(APP_SPEECH_STATE_AWAKE, "唤醒成功", "请说命令词", 0.0f, -1);
+            app_speech_update_snapshot(APP_SPEECH_STATE_AWAKE, "Wake word detected", "Speak a command now", 0.0f, -1);
         }
 
         if (!wakeup_active) {
@@ -228,7 +238,7 @@ static void app_speech_detect_task(void *arg)
         if (mn_state == ESP_MN_STATE_TIMEOUT) {
             s_afe_handle->enable_wakenet(s_afe_data);
             wakeup_active = false;
-            app_speech_update_snapshot(APP_SPEECH_STATE_TIMEOUT, "命令超时", "请重新说：嗨乐鑫", 0.0f, -1);
+            app_speech_update_snapshot(APP_SPEECH_STATE_TIMEOUT, "Command timeout", "Say Hi Lexin again", 0.0f, -1);
         }
     }
 
@@ -249,8 +259,8 @@ esp_err_t app_speech_service_init(void)
     s_snapshot.ready = false;
     s_snapshot.command_id = -1;
     strlcpy(s_snapshot.wake_hint, WAKE_HINT_TEXT, sizeof(s_snapshot.wake_hint));
-    strlcpy(s_snapshot.last_text, "语音服务启动中", sizeof(s_snapshot.last_text));
-    strlcpy(s_snapshot.detail, "准备初始化 INMP441", sizeof(s_snapshot.detail));
+    strlcpy(s_snapshot.last_text, "Speech service booting", sizeof(s_snapshot.last_text));
+    strlcpy(s_snapshot.detail, "Preparing INMP441", sizeof(s_snapshot.detail));
 
     ESP_RETURN_ON_ERROR(audio_input_init(), TAG, "failed to init INMP441 input");
 
@@ -296,7 +306,7 @@ esp_err_t app_speech_service_init(void)
 
     xSemaphoreTake(s_snapshot_mutex, portMAX_DELAY);
     s_snapshot.ready = true;
-    app_speech_set_snapshot_locked(APP_SPEECH_STATE_LISTENING, "等待唤醒", "先说：嗨乐鑫", 0.0f, -1);
+    app_speech_set_snapshot_locked(APP_SPEECH_STATE_LISTENING, "Waiting for wake word", "Say: Hi Lexin", 0.0f, -1);
     xSemaphoreGive(s_snapshot_mutex);
 
     s_service_initialized = true;

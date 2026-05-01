@@ -1,0 +1,68 @@
+# clock_codex
+
+`clock_codex` is the rebuilt main project for the ESP32-S3 smart terminal.
+It replaces the older `weather_clock_esp_idf` project as the active codebase and keeps the new
+architecture, documentation, and migration rules in one place.
+
+## Current Focus
+
+The project is currently in bring-up and migration mode.
+
+Completed milestones:
+
+- `LVGL 8.3.11` integrated
+- `ILI9341` display migrated
+- `XPT2046` touch migrated
+- speech path paused and moved out of the current mainline build
+
+Current main open direction:
+
+- keep display/touch stable
+- switch the next active task to `WS2812`
+
+## Read This First
+
+If you are starting a new session, read these files in order:
+
+1. `docs/current-status.md`
+2. `docs/architecture.md`
+3. `docs/versioning.md`
+4. `docs/runbook.md`
+5. `docs/hardware-wiring.md`
+
+## Project Structure
+
+- `src/`
+  startup orchestration only
+- `components/bsp`
+  board-level pin and hardware configuration
+- `components/display`
+  display driver and LVGL display registration
+- `components/touch`
+  touch driver and LVGL input registration
+- `components/audio_input`
+  paused `INMP441` experiments kept for reference
+- `components/app_services`
+  paused service-layer experiments kept for reference
+- `components/app_ui`
+  paused speech UI code kept for reference
+- `docs/`
+  project rules, state, runbook, and hardware notes
+
+## Build Status
+
+The current mainline build is a display/touch-only LVGL test app.
+`pio run` currently succeeds.
+
+Upload still depends on the real ESP32-S3 serial port being present on the machine.
+
+See `docs/current-status.md` and `docs/runbook.md` for the exact workaround flow.
+
+## Versioning
+
+This repository uses git as the default versioning method.
+
+- main branch: latest reasonably stable line
+- feature branches: larger experimental changes
+
+See `docs/versioning.md` for the working rules.

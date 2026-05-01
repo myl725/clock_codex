@@ -8,6 +8,8 @@
 
 esp_err_t audio_input_init(void);
 esp_err_t audio_input_read(int16_t *buffer, size_t sample_count, size_t *samples_read);
+void audio_input_get_debug_peaks(uint16_t *left_peak, uint16_t *right_peak);
+uint32_t audio_input_get_debug_raw_peak(void);
 uint32_t audio_input_get_sample_rate(void);
 int audio_input_get_feed_channel_count(void);
 const char *audio_input_get_input_format(void);

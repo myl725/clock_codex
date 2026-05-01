@@ -19,6 +19,9 @@ typedef struct {
     bool ready;
     app_speech_state_t state;
     uint8_t level_percent;
+    uint16_t left_peak;
+    uint16_t right_peak;
+    uint32_t raw_peak;
     float probability;
     int command_id;
     char wake_hint[32];

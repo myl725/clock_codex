@@ -27,7 +27,7 @@ def resolve_image_path(build_dir, relative_path):
     basename = os.path.basename(relative_path)
     if basename == "partition-table.bin":
         candidates.append(os.path.join(build_dir, "partitions.bin"))
-    elif basename.endswith(".bin"):
+    elif basename in ("clock_codex.bin", "firmware.bin"):
         candidates.append(os.path.join(build_dir, "firmware.bin"))
 
     for candidate in candidates:

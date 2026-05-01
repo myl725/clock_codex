@@ -5,7 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "driver/i2s_std.h"
+#include "driver/gpio.h"
+#include "i2s.h"
 #include "board_config.h"
 #include "esp_check.h"
 #include "esp_log.h"
@@ -15,10 +16,12 @@ static const char *TAG = "audio_input";
 static const char *AUDIO_INPUT_FORMAT = "MN";
 static const int AUDIO_INPUT_CHANNELS = 2;
 
-static i2s_chan_handle_t s_rx_handle;
 static int32_t *s_raw_buffer;
 static size_t s_raw_capacity_words;
 static bool s_initialized;
+static uint16_t s_last_left_peak;
+static uint16_t s_last_right_peak;
+static uint32_t s_last_raw_peak;
 
 static esp_err_t audio_input_ensure_raw_capacity(size_t raw_word_count)
 {
@@ -36,7 +39,7 @@ static esp_err_t audio_input_ensure_raw_capacity(size_t raw_word_count)
 
 static int16_t audio_input_convert_sample(int32_t raw_sample)
 {
-    int32_t scaled = raw_sample >> 14;
+    int32_t scaled = raw_sample >> 8;
     if (scaled > INT16_MAX) {
         scaled = INT16_MAX;
     } else if (scaled < INT16_MIN) {
@@ -53,28 +56,31 @@ esp_err_t audio_input_init(void)
         return ESP_OK;
     }
 
-    i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(BOARD_AUDIO_I2S_NUM, I2S_ROLE_MASTER);
-    ESP_RETURN_ON_ERROR(i2s_new_channel(&chan_cfg, NULL, &s_rx_handle), TAG, "failed to create I2S RX channel");
-
-    i2s_std_config_t std_cfg = {
-        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(BOARD_AUDIO_SAMPLE_RATE),
-        .slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO),
-        .gpio_cfg = {
-            .mclk = I2S_GPIO_UNUSED,
-            .bclk = BOARD_AUDIO_BCLK_GPIO,
-            .ws = BOARD_AUDIO_WS_GPIO,
-            .dout = I2S_GPIO_UNUSED,
-            .din = BOARD_AUDIO_DATA_IN_GPIO,
-            .invert_flags = {
-                .mclk_inv = false,
-                .bclk_inv = false,
-                .ws_inv = false,
-            },
-        },
+    const i2s_config_t i2s_cfg = {
+        .mode = I2S_MODE_MASTER | I2S_MODE_RX,
+        .sample_rate = BOARD_AUDIO_SAMPLE_RATE,
+        .bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT,
+        .channel_format = BOARD_AUDIO_MIC_USE_LEFT_SLOT ? I2S_CHANNEL_FMT_ONLY_LEFT : I2S_CHANNEL_FMT_ONLY_RIGHT,
+        .communication_format = I2S_COMM_FORMAT_I2S | I2S_COMM_FORMAT_I2S_MSB,
+        .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
+        .dma_buf_count = 8,
+        .dma_buf_len = 256,
+        .use_apll = false,
+        .tx_desc_auto_clear = false,
+        .fixed_mclk = 0,
     };
 
-    ESP_RETURN_ON_ERROR(i2s_channel_init_std_mode(s_rx_handle, &std_cfg), TAG, "failed to init I2S standard RX mode");
-    ESP_RETURN_ON_ERROR(i2s_channel_enable(s_rx_handle), TAG, "failed to enable I2S RX channel");
+    const i2s_pin_config_t pin_cfg = {
+        .bck_io_num = BOARD_AUDIO_BCLK_GPIO,
+        .ws_io_num = BOARD_AUDIO_WS_GPIO,
+        .data_out_num = I2S_PIN_NO_CHANGE,
+        .data_in_num = BOARD_AUDIO_DATA_IN_GPIO,
+        .mck_io_num = I2S_PIN_NO_CHANGE,
+    };
+
+    ESP_RETURN_ON_ERROR(i2s_driver_install(BOARD_AUDIO_I2S_NUM, &i2s_cfg, 0, NULL), TAG, "failed to install I2S RX driver");
+    ESP_RETURN_ON_ERROR(i2s_set_pin(BOARD_AUDIO_I2S_NUM, &pin_cfg), TAG, "failed to set I2S pins");
+    ESP_RETURN_ON_ERROR(i2s_zero_dma_buffer(BOARD_AUDIO_I2S_NUM), TAG, "failed to clear I2S DMA buffer");
 
     s_initialized = true;
     ESP_LOGI(
@@ -95,25 +101,49 @@ esp_err_t audio_input_read(int16_t *buffer, size_t sample_count, size_t *samples
     ESP_RETURN_ON_FALSE((sample_count % AUDIO_INPUT_CHANNELS) == 0, ESP_ERR_INVALID_ARG, TAG, "sample count must be divisible by channel count");
 
     const size_t frame_count = sample_count / AUDIO_INPUT_CHANNELS;
-    const size_t raw_word_count = frame_count * 2;
+    const size_t raw_word_count = frame_count;
     ESP_RETURN_ON_ERROR(audio_input_ensure_raw_capacity(raw_word_count), TAG, "failed to resize raw buffer");
 
     size_t bytes_read = 0;
     ESP_RETURN_ON_ERROR(
-        i2s_channel_read(s_rx_handle, s_raw_buffer, raw_word_count * sizeof(int32_t), &bytes_read, portMAX_DELAY),
+        i2s_read(BOARD_AUDIO_I2S_NUM, s_raw_buffer, raw_word_count * sizeof(int32_t), &bytes_read, portMAX_DELAY),
         TAG,
         "failed to read I2S microphone data"
     );
 
     const size_t raw_words_read = bytes_read / sizeof(int32_t);
-    const size_t frames_read = raw_words_read / 2;
-    const size_t mic_slot_index = BOARD_AUDIO_MIC_USE_LEFT_SLOT ? 0 : 1;
+    const size_t frames_read = raw_words_read;
+    uint16_t left_peak = 0;
+    uint16_t right_peak = 0;
+    uint32_t raw_peak = 0;
 
     for (size_t frame = 0; frame < frames_read; frame++) {
-        int32_t raw_mic = s_raw_buffer[(frame * 2) + mic_slot_index];
-        buffer[frame * AUDIO_INPUT_CHANNELS] = audio_input_convert_sample(raw_mic);
+        int32_t raw_mic = s_raw_buffer[frame];
+        int16_t mic_sample = audio_input_convert_sample(raw_mic);
+        uint32_t raw_abs = (uint32_t)(raw_mic < 0 ? -raw_mic : raw_mic);
+        uint16_t mic_abs = (uint16_t)((raw_abs >> 8) > UINT16_MAX ? UINT16_MAX : (raw_abs >> 8));
+
+        if (raw_abs > raw_peak) {
+            raw_peak = raw_abs;
+        }
+
+        if (BOARD_AUDIO_MIC_USE_LEFT_SLOT) {
+            if (mic_abs > left_peak) {
+                left_peak = mic_abs;
+            }
+        } else {
+            if (mic_abs > right_peak) {
+                right_peak = mic_abs;
+            }
+        }
+
+        buffer[frame * AUDIO_INPUT_CHANNELS] = mic_sample;
         buffer[(frame * AUDIO_INPUT_CHANNELS) + 1] = 0;
     }
+
+    s_last_left_peak = left_peak;
+    s_last_right_peak = right_peak;
+    s_last_raw_peak = raw_peak;
 
     if (frames_read < frame_count) {
         memset(
@@ -128,6 +158,21 @@ esp_err_t audio_input_read(int16_t *buffer, size_t sample_count, size_t *samples
     }
 
     return ESP_OK;
+}
+
+void audio_input_get_debug_peaks(uint16_t *left_peak, uint16_t *right_peak)
+{
+    if (left_peak != NULL) {
+        *left_peak = s_last_left_peak;
+    }
+    if (right_peak != NULL) {
+        *right_peak = s_last_right_peak;
+    }
+}
+
+uint32_t audio_input_get_debug_raw_peak(void)
+{
+    return s_last_raw_peak;
 }
 
 uint32_t audio_input_get_sample_rate(void)

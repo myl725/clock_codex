@@ -1,7 +1,8 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_timer.h"
-#include "app_speech_service.h"
+#include "app_led_service.h"
+#include "app_music_service.h"
 #include "app_ui.h"
 #include "display_ili9341.h"
 #include "freertos/FreeRTOS.h"
@@ -40,10 +41,13 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
 
+    app_music_service_log_boot_diagnostics();
+
     lv_init();
     display_ili9341_init();
     touch_xpt2046_init();
-    ESP_ERROR_CHECK(app_speech_service_init());
+    ESP_ERROR_CHECK(app_led_service_init());
+    ESP_ERROR_CHECK(app_music_service_init());
     app_ui_init();
 
     const esp_timer_create_args_t tick_timer_args = {
@@ -56,5 +60,5 @@ void app_main(void)
 
     xTaskCreatePinnedToCore(lvgl_task, "lvgl_task", 1024 * 8, NULL, 2, NULL, 1);
 
-    ESP_LOGI(TAG, "LVGL, touch, and INMP441 speech demo initialized.");
+    ESP_LOGI(TAG, "LVGL display/touch/WS2812/audio test is running.");
 }
