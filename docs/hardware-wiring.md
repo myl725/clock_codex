@@ -88,13 +88,12 @@ That means:
 
 ## WS2812 Wiring
 
-Next active task:
+Current LED target:
 
 - `WS2812`
 
 Current note:
 
-- the software task has been reprioritized to `WS2812`
 - `GPIO46` -> `WS2812 DIN`
 - current software assumes `10` LEDs in `board_config.h`
 - once the real LED count is confirmed, this document and `board_config.h` should be updated together
