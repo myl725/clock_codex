@@ -1,284 +1,197 @@
-# esp32-s3-smart-ambient-clock-requirements.md
+# clock_codex 当前主线需求
 
-# ESP32-S3 Smart Ambient Clock Project Requirements
+## 摘要
 
-## Summary
+当前 `clock_codex` 主线是一个基于 `ESP32-S3 + PlatformIO + ESP-IDF + LVGL` 的硬件 bring-up 与控制应用。
 
-Build a new ESP32-S3 embedded application using `PlatformIO + ESP-IDF + LVGL` for a smart ambient desktop device. The product is not a multi-feature prototype. The first official version focuses on a polished core experience around:
+它当前的有效范围包括：
 
-- time display
-- Wi‑Fi connectivity
-- SNTP time sync
-- weather display
-- WS2812 lighting effects
-- local persistent configuration
-- first-boot setup flow
+- LVGL 运行时稳定性
+- `ILI9341` 显示 bring-up
+- `XPT2046` 触摸 bring-up
+- `WS2812` 灯光控制
+- `MAX98357A` 音频播放输出
+- 面向 `WAV` 与首版 `MP3` 的 SD 卡音频播放
 
-The new project is a fresh implementation. The old project is reference material, not an architectural base.
+本文档反映的是当前代码现实，而不是更早期那个以时间 / 天气为核心的环境时钟产品规划。
 
-## Product Goal
+## 当前目标
 
-Create a stable, atmosphere-first desktop device that:
+维持一个稳定、可交互的控制应用，使开发板能够验证：
 
-- looks intentional and visually coherent
-- provides reliable clock and weather information
-- remains usable while offline
-- is maintainable as a long-term embedded product
-- can later accept extensions such as music or pomodoro without restructuring the core
+- 显示输出
+- 触摸输入
+- LED 灯效控制
+- 音调播放
+- SD 卡音频播放
 
-## v1 Scope
+当前主线本质上是一个 bring-up 实验台与验证载体。
+它还不是最终产品 UX。
 
-### In Scope
+## 当前范围内
 
-- main home screen
-- setup/config flow
-- Wi‑Fi status
-- SNTP sync
-- weather fetch and display
-- WS2812 lighting mode and brightness control
-- local configuration persistence
-- graceful offline degradation
+- 带有 `Lighting` 与 `Audio` 标签页的 LVGL 界面
+- `WS2812` 灯效选择
+- `WS2812` 颜色选择
+- 通过 `MAX98357A` 播放音调
+- 扫描 SD 卡中可播放的 `.wav` 与 `.mp3` 文件
+- 首版 `WAV` 播放
+- 首版 `MP3` 播放
+- 当预期 SD 文件缺失时，可选地通过 Wi-Fi 下载默认 WAV 测试文件
+- 用于显示播放状态与失败阶段的诊断状态文本
 
-### Out of Scope for v1 Core Delivery
+## 当前主线中明确不在范围内
 
-- music playback
-- pomodoro
-- SD card media flows
-- advanced personalization beyond basic preferences
-- large feature menus or multi-mode product behavior
+- 语音识别
+- 麦克风 bring-up
+- 唤醒词或命令词流程
+- 时间显示
+- SNTP 同步
+- 天气获取与显示
+- 设置 / 配置流程
+- 面向终端用户的精致产品 UX
 
-These features may be added later, but they must not drive the first implementation.
+这些方向未来可能会重新回归，但它们不属于当前构建目标。
 
-## Platform and Tooling
+## 平台与工具链
 
-Use:
+使用：
 
 - VSCode + PlatformIO
-- ESP-IDF framework
-- LVGL for UI
-- NVS for persistent configuration
-- ESP-IDF native networking and system libraries
+- ESP-IDF 框架
+- LVGL 作为 UI
+- ESP-IDF 原生驱动、存储、网络与文件系统库
 
-Do not redesign the project around Arduino-style dependencies.
+不要将项目重新设计成依赖 Arduino 风格生态。
 
-## Hardware Assumptions
+## 当前硬件假设
 
-Assume the current hardware platform remains in use:
+假定当前激活的硬件路径仍是：
 
-- ESP32-S3
-- LCD display
-- touch input
-- Wi‑Fi
-- WS2812 lighting
-- optional DHT11 sensor support
+- `ESP32-S3`
+- `ILI9341` 显示
+- `XPT2046` 触摸
+- `WS2812`
+- `MAX98357A`
+- 使用独立 SPI 的 SD 卡
 
-The new design should preserve the ability to reuse known-good pin mappings, display parameters, touch parameters, and lighting/sensor low-level details from the old project where useful.
+已暂停、仅供参考的硬件路径：
 
-## System Architecture
+- `INMP441`
 
-Use a layered structure:
+## 架构要求
 
-- `drivers`
-- `services`
-- `app`
-- `ui`
+保持仓库治理文档中已经定义好的分层结构：
 
-### drivers
+- `src`
+- `bsp`
+- `display`
+- `touch`
+- `app_services`
+- `app_ui`
 
-Responsible for:
+### 所有权规则
 
-- board-level definitions
-- GPIO/RMT/SPI/I2C/I2S/display/touch/sensor/light low-level access
-- peripheral initialization and raw device interaction
+- `src`
+  - 仅负责启动流程编排
+- `bsp`
+  - 板级引脚与硬件常量
+- `display`
+  - LCD 总线与 LVGL 显示注册
+- `touch`
+  - 触摸控制器接入与 LVGL indev 注册
+- `app_services`
+  - 灯光控制、音频播放控制、SD 扫描 / 下载辅助逻辑
+- `app_ui`
+  - LVGL 控件、标签、标签页，以及面向服务层的事件回调
 
-Not responsible for:
+UI 不得直接访问原始 SPI、I2S、RMT、GPIO、SD 或 Wi-Fi 驱动对象。
 
-- UI logic
-- network workflows
-- weather parsing
-- page state management
+## UI 要求
 
-### services
+当前激活的 UI 应保持为一个面向硬件验证的简洁控制面板。
 
-Responsible for:
+它当前需要暴露：
 
-- configuration service
-- network service
-- time service
-- weather service
-- lighting service
-- optional sensor service
+- 一个 `Lighting` 标签页
+- 灯效下拉框
+- 颜色下拉框
+- 实时 LED 状态文本
+- 一个 `Audio` 标签页
+- 在 `Tone` 与 `SD Audio` 间进行源选择
+- 音调或文件选择
+- 播放切换
+- 播放诊断信息
 
-Services own domain behavior, asynchronous work, retries, and state updates.
+当前 UI 是有意保持功能性、测试导向的。
 
-### app
+## 音频要求
 
-Responsible for:
+当前音频路径必须支持：
 
-- boot flow
-- central application state
-- startup orchestration
-- route decisions such as setup vs home
+- 默认 `44.1kHz` 的音调播放
+- 文件播放时的运行期采样率切换
+- 从 `/sdcard` 读取受支持文件
+- `16-bit PCM WAV`
+- 通过当前轻量解码路径进行首版 MP3 解码
 
-### ui
+已知限制：
 
-Responsible for:
+- 并非所有 MP3 编码变体都预期能立即工作
 
-- screen creation
-- state rendering
-- event forwarding
-- route display
+## 网络要求
 
-UI must not directly own network requests, sensor reads, or hardware control.
+当前主线中，网络并不是顶层产品功能。
 
-## UI Strategy
+当前唯一激活的网络辅助行为是：
 
-Continue using SquareLine Studio if it helps with layout and asset generation, but treat it as a layout generator only.
+- 使用已配置凭据连接 Wi-Fi
+- 当预期 SD 测试资源缺失时，下载一个默认 WAV 测试文件
 
-### Rules
+不要把网络视为 UI 持有的职责。
+任何 Wi-Fi 或 HTTP 相关工作都必须留在 services 层。
 
-- SquareLine output is generated code.
-- Generated files should remain isolated.
-- Custom behavior must live outside generated screen files.
-- Presenters/controllers should bind state to widgets and forward UI events to services.
+## 配置要求
 
-### UI Priorities
+按意图拆分配置：
 
-- atmosphere-first visual direction
-- clear primary time display
-- low-friction weather/status presentation
-- minimal clutter
-- gentle, intentional motion
-- responsive interaction
-- readable but not dashboard-like
+- 板级常量放在 `board_config.h`
+- 应用级常量与可选的本地 Wi-Fi 密钥放在 `app_config.h`
+- 框架级开关放在 `sdkconfig.defaults`
 
-## Boot Flow Requirements
+不要把用户凭据直接硬编码进实现文件。
 
-On boot:
+## 并发要求
 
-1. initialize core runtime
-2. load persisted configuration
-3. decide whether setup is required
-4. if configuration is incomplete, show setup screen
-5. if configuration is complete, show home screen immediately
-6. continue Wi‑Fi, SNTP, and weather work asynchronously
+- 将 LVGL 访问保持在 LVGL/UI 执行上下文中。
+- 将阻塞型 SD、Wi-Fi、HTTP 与播放工作保留在 services 层。
+- 不要从 Wi-Fi 回调或后台服务任务中直接调用 LVGL。
+- 通过服务状态以及轮询 / 刷新模式，把后台进度反映到 UI 中。
 
-Boot must not block the UI on weather success or full network readiness.
+## 当前验收标准
 
-## Setup Flow Requirements
+当满足以下条件时，当前主线可视为可接受：
 
-The setup flow must support at least:
+- 项目能在 PlatformIO 中成功构建
+- 开发板能启动进入 LVGL 控制应用
+- 显示输出稳定
+- 触摸交互正常
+- WS2812 灯效与颜色控制正常
+- 音调播放可稳定启动与停止
+- SD 音频模式能列出可用文件
+- 已知良好的 `WAV` 与 `MP3` 样本可播放
+- 架构边界保持完整
+- 语音代码继续排除在当前激活构建路径之外
 
-- Wi‑Fi SSID
-- Wi‑Fi password
-- weather API key
-- city
-- basic brightness or theme preference
-- setup-complete persistence
+## 未来方向说明
 
-The setup flow should be simple and reliable. It does not need to be visually elaborate in v1.
+更早期的环境时钟产品方向依然可作为长期背景参考，但它不是当前主线的事实依据。
 
-## Offline and Degradation Requirements
+如果项目未来重新回到：
 
-When offline:
+- 时间
+- 天气
+- 设置流程
+- 持久化应用配置
 
-- clock must continue working
-- lighting must continue working
-- UI must remain responsive
-- weather must show offline state or cached last-known data
-
-Network or API failures must be treated as degradation, not fatal crashes.
-
-## State Model Requirements
-
-Define a central application state covering at least:
-
-- boot stage
-- config readiness
-- network connectivity
-- IP readiness
-- time sync status
-- weather validity
-- weather snapshot
-- weather last update
-- lighting mode
-- lighting brightness
-- optional sensor snapshot
-
-The UI must render from this state rather than from scattered globals.
-
-## Configuration Requirements
-
-Persist at least:
-
-- Wi‑Fi SSID
-- Wi‑Fi password
-- weather API key
-- city
-- lighting brightness
-- basic theme or visual preference
-- setup-complete flag
-
-Do not hardcode user credentials or weather API values in source.
-
-## Concurrency Requirements
-
-- Keep LVGL access confined to the UI execution context.
-- Keep blocking work in services.
-- Use queues, events, or controlled state transitions between tasks.
-- Do not directly update LVGL from Wi‑Fi callbacks, HTTP callbacks, or sensor tasks.
-- Do not run blocking network requests inside LVGL timers or UI callbacks.
-
-## Migration Strategy
-
-Use the old project only as a reference for:
-
-- pin assignments
-- display and touch parameters
-- DHT11 implementation details if needed
-- WS2812 implementation details if needed
-- reusable images and fonts
-- validated low-level hardware behavior
-
-Do not copy the old architecture into the new codebase.
-
-## Recommended Build Sequence
-
-Implement in this order:
-
-1. clean PlatformIO shell
-2. minimal ESP-IDF boot and logs
-3. LVGL and display bring-up
-4. empty layered project structure
-5. central app state and boot router
-6. setup and home screen placeholders
-7. configuration persistence
-8. Wi‑Fi service
-9. SNTP time service
-10. weather service
-11. lighting service
-12. optional sensor integration
-
-## Acceptance Criteria
-
-The new v1 foundation is acceptable when:
-
-- the project builds cleanly in PlatformIO
-- boot reliably chooses setup vs home
-- LVGL UI remains responsive
-- no blocking network work runs in UI paths
-- settings persist across reboot
-- time and weather update asynchronously
-- offline behavior degrades gracefully
-- architecture boundaries remain intact
-- SquareLine-generated files do not contain business logic
-
-## Default Assumptions
-
-- Keep `PlatformIO + ESP-IDF`
-- Keep `LVGL`
-- Keep SquareLine as a layout tool only
-- Focus v1 on `lighting + time + weather`
-- Defer music and pomodoro
-- Use NVS for local persistent settings
-- Optimize for long-term maintainability rather than fast feature stacking
+这些需求应通过新的里程碑文档被有意识地重新引入，而不是默认它们已经体现在当前代码中。

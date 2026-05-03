@@ -4,6 +4,7 @@
 #include "app_led_service.h"
 #include "app_music_service.h"
 #include "app_ui.h"
+#include "app_usb_audio_service.h"
 #include "display_ili9341.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -25,8 +26,8 @@ static void lvgl_task(void *arg)
 
     while (true) {
         uint32_t wait_ms = lv_timer_handler();
-        if (wait_ms > 20) {
-            wait_ms = 20;
+        if (wait_ms > 10) {
+            wait_ms = 10;
         }
         vTaskDelay(pdMS_TO_TICKS(wait_ms > 0 ? wait_ms : 1));
     }
@@ -48,6 +49,7 @@ void app_main(void)
     touch_xpt2046_init();
     ESP_ERROR_CHECK(app_led_service_init());
     ESP_ERROR_CHECK(app_music_service_init());
+    ESP_ERROR_CHECK(app_usb_audio_service_init());
     app_ui_init();
 
     const esp_timer_create_args_t tick_timer_args = {

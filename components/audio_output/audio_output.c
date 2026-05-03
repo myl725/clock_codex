@@ -80,7 +80,7 @@ static esp_err_t audio_output_write_bytes(const void *buffer, size_t byte_count,
         return ESP_ERR_TIMEOUT;
     }
     if (s_write_call_count <= 4 || (s_write_call_count % 32U) == 0U) {
-        ESP_LOGI(
+        ESP_LOGD(
             TAG,
             "i2s write ok call=%lu bytes=%u",
             (unsigned long)s_write_call_count,

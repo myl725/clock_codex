@@ -15,6 +15,7 @@
 
 #define ILI9341_CMD  0
 #define ILI9341_DATA 1
+#define ILI9341_MAX_TRANSFER_BYTES 16384U
 
 typedef struct {
     uint8_t cmd;
@@ -101,6 +102,30 @@ static void lcd_set_rotation(uint8_t rotation)
     lcd_send_data(&madctl_table[rotation], 1);
 }
 
+static void lcd_set_window(int16_t x1, int16_t y1, int16_t x2, int16_t y2)
+{
+    uint8_t col_data[] = {
+        (uint8_t)((x1 >> 8) & 0xFF),
+        (uint8_t)(x1 & 0xFF),
+        (uint8_t)((x2 >> 8) & 0xFF),
+        (uint8_t)(x2 & 0xFF),
+    };
+    uint8_t row_data[] = {
+        (uint8_t)((y1 >> 8) & 0xFF),
+        (uint8_t)(y1 & 0xFF),
+        (uint8_t)((y2 >> 8) & 0xFF),
+        (uint8_t)(y2 & 0xFF),
+    };
+
+    lcd_send_command(0x2A);
+    lcd_send_data(col_data, sizeof(col_data));
+
+    lcd_send_command(0x2B);
+    lcd_send_data(row_data, sizeof(row_data));
+
+    lcd_send_command(0x2C);
+}
+
 static void lcd_panel_init(void)
 {
     spi_bus_config_t bus_config = {
@@ -109,7 +134,7 @@ static void lcd_panel_init(void)
         .sclk_io_num = BOARD_LCD_PIN_CLK,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
-        .max_transfer_sz = BOARD_LCD_HOR_RES * BOARD_LCD_DRAW_BUF_LINES * sizeof(lv_color_t) + 8,
+        .max_transfer_sz = ILI9341_MAX_TRANSFER_BYTES + 8,
     };
 
     spi_device_interface_config_t device_config = {
@@ -160,37 +185,36 @@ static void lvgl_flush_cb(lv_disp_drv_t *disp_drv, const lv_area_t *area, lv_col
     const int16_t y2 = area->y2;
     const int16_t width = x2 - x1 + 1;
     const int16_t height = y2 - y1 + 1;
+    const size_t bytes_per_line = (size_t)width * sizeof(lv_color_t);
+    size_t max_lines_per_chunk = ILI9341_MAX_TRANSFER_BYTES / bytes_per_line;
+    size_t sent_lines = 0U;
 
-    uint8_t col_data[] = {
-        (uint8_t)((x1 >> 8) & 0xFF),
-        (uint8_t)(x1 & 0xFF),
-        (uint8_t)((x2 >> 8) & 0xFF),
-        (uint8_t)(x2 & 0xFF),
-    };
-    uint8_t row_data[] = {
-        (uint8_t)((y1 >> 8) & 0xFF),
-        (uint8_t)(y1 & 0xFF),
-        (uint8_t)((y2 >> 8) & 0xFF),
-        (uint8_t)(y2 & 0xFF),
-    };
+    if (max_lines_per_chunk == 0U) {
+        max_lines_per_chunk = 1U;
+    }
 
-    lcd_send_command(0x2A);
-    lcd_send_data(col_data, sizeof(col_data));
+    while (sent_lines < (size_t)height) {
+        size_t remaining_lines = (size_t)height - sent_lines;
+        size_t chunk_lines = remaining_lines < max_lines_per_chunk ? remaining_lines : max_lines_per_chunk;
+        lv_color_t *chunk_ptr = color_p + (sent_lines * (size_t)width);
+        spi_transaction_t *result = NULL;
 
-    lcd_send_command(0x2B);
-    lcd_send_data(row_data, sizeof(row_data));
+        lcd_set_window(
+            x1,
+            (int16_t)(y1 + sent_lines),
+            x2,
+            (int16_t)(y1 + sent_lines + chunk_lines - 1U)
+        );
 
-    lcd_send_command(0x2C);
+        memset(&s_spi_trans, 0, sizeof(s_spi_trans));
+        s_spi_trans.length = bytes_per_line * chunk_lines * 8U;
+        s_spi_trans.tx_buffer = chunk_ptr;
+        s_spi_trans.user = (void *)ILI9341_DATA;
 
-    memset(&s_spi_trans, 0, sizeof(s_spi_trans));
-    s_spi_trans.length = width * height * sizeof(lv_color_t) * 8;
-    s_spi_trans.tx_buffer = color_p;
-    s_spi_trans.user = (void *)ILI9341_DATA;
-
-    ESP_ERROR_CHECK(spi_device_queue_trans(s_lcd_spi, &s_spi_trans, portMAX_DELAY));
-
-    spi_transaction_t *result = NULL;
-    ESP_ERROR_CHECK(spi_device_get_trans_result(s_lcd_spi, &result, portMAX_DELAY));
+        ESP_ERROR_CHECK(spi_device_queue_trans(s_lcd_spi, &s_spi_trans, portMAX_DELAY));
+        ESP_ERROR_CHECK(spi_device_get_trans_result(s_lcd_spi, &result, portMAX_DELAY));
+        sent_lines += chunk_lines;
+    }
 
     lv_disp_flush_ready(disp_drv);
 }

@@ -1,105 +1,101 @@
-# clock_codex Architecture Rules
+# clock_codex 架构规则
 
-## Purpose
+## 目的
 
-This document defines the stable architecture boundaries for the `clock_codex` ESP-IDF project.
-Use it as the source of truth when adding modules, migrating old code from `weather_clock_esp_idf`,
-or reviewing whether a change belongs in the correct layer.
+本文定义了 `clock_codex` 这个 ESP-IDF 项目的稳定架构边界。
+在新增模块、从 `weather_clock_esp_idf` 迁移旧代码，或评审某个改动是否位于正确层级时，应将本文作为事实依据。
 
-## Layer Model
+## 分层模型
 
-The project is organized around six responsibilities:
+项目围绕六类职责组织：
 
 - `src/`
-  Own startup orchestration only. Keep `app_main()` thin and limited to init order, task bootstrap,
-  and top-level lifecycle control.
+  仅负责启动流程编排。保持 `app_main()` 足够轻量，只承载初始化顺序、任务引导与顶层生命周期控制。
 - `components/bsp`
-  Own board-specific configuration and low-level shared hardware definitions such as GPIO mapping,
-  SPI host choice, display size, and default touch calibration values.
+  负责板级专用配置与底层共享硬件定义，例如 GPIO 映射、SPI host 选择、显示尺寸与默认触摸校准值。
 - `components/display`
-  Own display driver integration, LVGL display registration, frame flush, and display bus details.
+  负责显示驱动接入、LVGL 显示注册、frame flush 与显示总线细节。
 - `components/touch`
-  Own touch controller integration, coordinate conversion, calibration handling, and LVGL indev registration.
+  负责触摸控制器接入、坐标转换、校准处理与 LVGL indev 注册。
 - `components/app_services`
-  Own service-facing APIs that expose capabilities to the UI and later coordinate Wi-Fi, SNTP,
-  weather, DHT11, WS2812, SD, and MP3 modules.
+  负责面向服务的 API，对 UI 暴露能力，并在未来协调 Wi-Fi、SNTP、天气、DHT11、WS2812、SD 与 MP3 模块。
 - `components/app_ui`
-  Own LVGL screens, assets, event callbacks, and UI state updates.
+  负责 LVGL 页面、资源、事件回调与 UI 状态更新。
 
-## Dependency Direction
+## 依赖方向
 
-Only allow these dependency directions:
+只允许以下依赖方向：
 
-- `src` -> `bsp`, `display`, `touch`, `app_services`, `app_ui`
+- `src` -> `bsp`、`display`、`touch`、`app_services`、`app_ui`
 - `app_ui` -> `app_services`
-- `app_services` -> `bsp`, hardware-specific driver modules, ESP-IDF services
-- `display` -> `bsp`, LVGL, ESP-IDF drivers
-- `touch` -> `bsp`, LVGL, ESP-IDF drivers
+- `app_services` -> `bsp`、面向硬件的驱动模块、ESP-IDF 服务
+- `display` -> `bsp`、LVGL、ESP-IDF 驱动
+- `touch` -> `bsp`、LVGL、ESP-IDF 驱动
 
-Do not allow these reverse dependencies:
+禁止以下反向依赖：
 
 - `app_services` -> `app_ui`
 - `display` -> `app_ui`
 - `touch` -> `app_ui`
-- hardware/driver modules -> `app_ui`
+- 硬件 / 驱动模块 -> `app_ui`
 
-## Ownership Rules
+## 所有权规则
 
-Assign each concern to one owner layer:
+每项关注点都应归属于一个清晰的层：
 
-- startup order, task creation policy, and global init sequence: `src`
-- board pins, bus identifiers, calibration defaults, hardware constants: `bsp`
-- display flush and display bus transactions: `display`
-- touch sampling and coordinate mapping: `touch`
-- external capabilities and module orchestration: `app_services`
-- screen widgets, transitions, labels, timers tied to page presentation: `app_ui`
+- 启动顺序、任务创建策略与全局初始化序列：`src`
+- 板级引脚、总线标识、校准默认值、硬件常量：`bsp`
+- 显示 flush 与显示总线事务：`display`
+- 触摸采样与坐标映射：`touch`
+- 外部能力与模块编排：`app_services`
+- 页面控件、转场、标签、与页面表现绑定的定时器：`app_ui`
 
-If a change spans multiple layers, split it so each layer keeps its own responsibilities.
+如果一项改动跨越多个层，请拆分它，使每一层都保持各自职责。
 
-## Initialization Rules
+## 初始化规则
 
-For phase 1, keep the init order fixed:
+在第一阶段，保持初始化顺序固定：
 
 1. `nvs_flash_init()`
 2. `lv_init()`
-3. `bsp_display_init()` or `display_init()` wrapper
-4. `bsp_touch_init()` or `touch_init()` wrapper
+3. `bsp_display_init()` 或 `display_init()` 封装
+4. `bsp_touch_init()` 或 `touch_init()` 封装
 5. `app_ui_init()`
-6. create `lvgl_task`
+6. 创建 `lvgl_task`
 
-Do not start Wi-Fi, DHT11, WS2812, SD, or audio tasks in phase 1 unless the milestone explicitly adds them.
+除非某个里程碑明确要求加入，否则在第一阶段不要启动 Wi-Fi、DHT11、WS2812、SD 或音频任务。
 
-## UI and Service Boundary
+## UI 与 Service 边界
 
-Treat the UI as a client of services:
+将 UI 视为 services 的客户端：
 
-- UI may request time, weather, temperature, music control, or LED updates through `app_services`.
-- UI may not access SPI, I2S, RMT, GPIO, or raw ESP-IDF driver objects directly.
-- UI may not read or write driver-owned globals such as raw queues, bus handles, or sensor structs.
+- UI 可以通过 `app_services` 请求时间、天气、温度、音乐控制或 LED 更新。
+- UI 不得直接访问 SPI、I2S、RMT、GPIO 或原始 ESP-IDF 驱动对象。
+- UI 不得读写驱动层持有的全局变量，例如原始队列、总线句柄或传感器结构体。
 
-In early migration, service stubs are allowed and preferred over direct coupling.
+在早期迁移阶段，相比直接耦合，更推荐使用 service stub。
 
-## Configuration Boundary
+## 配置边界
 
-Split configuration by intent:
+按意图拆分配置：
 
 - `board_config.h`
-  Board pins, SPI host selection, display geometry, calibration defaults.
+  板级引脚、SPI host 选择、显示几何参数、校准默认值。
 - `app_config.h`
-  Project-level app configuration such as Wi-Fi credentials, weather location, API keys, feature flags.
+  项目级应用配置，例如 Wi-Fi 凭据、天气位置、API Key、功能开关。
 - `sdkconfig.defaults`
-  ESP-IDF capability toggles and framework-level options.
+  ESP-IDF 能力开关与框架级选项。
 
-Do not hardcode these values inside feature `.c` files except for short-lived debug experiments that are removed before merge.
+除非是合并前会移除的短期调试实验，否则不要把这些值硬编码到功能实现 `.c` 文件中。
 
-## Migration Placement Guide
+## 迁移落位指南
 
-When migrating code from the old project, place it by behavior, not by old folder name:
+从旧项目迁移代码时，应按行为落位，而不是按旧文件夹名照搬：
 
 - `lv_port_disp*` -> `components/display`
 - `touch_indev*` -> `components/touch`
-- SquareLine/LVGL screens, fonts, images -> `components/app_ui`
-- Wi-Fi, SNTP, weather, DHT11, WS2812, SD/MP3 control facades -> `components/app_services`
-- board constants and shared hardware mapping -> `components/bsp`
+- SquareLine / LVGL 页面、字体、图片 -> `components/app_ui`
+- Wi-Fi、SNTP、天气、DHT11、WS2812、SD / MP3 控制外观 API -> `components/app_services`
+- 板级常量与共享硬件映射 -> `components/bsp`
 
-Do not preserve old relative include structure if it conflicts with these ownership rules.
+如果旧的相对 include 结构与这些所有权规则冲突，不要保留它。

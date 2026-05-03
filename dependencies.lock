@@ -1,33 +1,45 @@
 dependencies:
-  espressif/cjson:
-    component_hash: e788323270d90738662d66fffa910bfe1fba019bba087f01557e70c40485b469
+  espressif/esp_tinyusb:
+    component_hash: fa0c96d7bdc3fe37383d735e2839a9007200a0b6bc039458d45d004b50146e81
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    - name: espressif/tinyusb
+      registry_url: https://components.espressif.com
+      require: public
+      version: '>=0.17.0~2'
     source:
-      service_url: https://api.components.espressif.com/
+      registry_url: https://components.espressif.com/
       type: service
-    version: 1.7.19~2
-  espressif/dl_fft:
-    component_hash: 7dadbd644c0d7ba4733cc3726ec4cff6edf27b043725e1115861dec1609a3d28
+    targets:
+    - esp32s2
+    - esp32s3
+    - esp32p4
+    - esp32h4
+    version: 2.1.1
+  espressif/tinyusb:
+    component_hash: a40b7f67df6ac254a4afd96c6401cc56f2059ae747d6d7e66b568bca53ad0edc
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
     source:
-      service_url: https://api.components.espressif.com/
+      registry_url: https://components.espressif.com
       type: service
-    version: 0.3.1
-  espressif/esp-dsp:
-    component_hash: 12e44db246517a627bc0fe2b255b8335410c0215c98bfba2df5a8e3edea839ef
-    source:
-      service_url: https://api.components.espressif.com/
-      type: service
-    version: 1.8.0
-  espressif/esp-sr:
-    component_hash: a0bc0e3104ef406b661fe861565514e9c9ecdafbce0f0645e5bfc80d5aa290b9
-    source:
-      service_url: https://api.components.espressif.com/
-      type: service
-    version: 2.4.3
+    targets:
+    - esp32s2
+    - esp32s3
+    - esp32p4
+    - esp32h4
+    - esp32s31
+    version: 0.19.0~3
   idf:
-    component_hash: null
     source:
       type: idf
-    version: 5.4.0
-manifest_hash: 1f1d584e16939aecedd89fb6a439ba4c36807d1a050c09d3fcb086663f0da073
+    version: 5.5.0
+direct_dependencies:
+- espressif/esp_tinyusb
+manifest_hash: 95081f3c76c3d12438f274b6a5d45b1e9dba6d66ed2fa635a3a4a94d1f10b479
 target: esp32s3
-version: 1.0.0
+version: 2.0.0

@@ -1,86 +1,85 @@
-# clock_codex Migration Rules
+# clock_codex 迁移规则
 
-## Purpose
+## 目的
 
-This document governs how code is moved from `weather_clock_esp_idf` into `clock_codex`.
-The goal is not to copy the old structure verbatim. The goal is to preserve working behavior while
-removing the coupling that made the old project hard to extend.
+本文约束如何将代码从 `weather_clock_esp_idf` 迁移到 `clock_codex`。
+目标不是原样复制旧结构，而是在保留可工作行为的同时，拆掉使旧项目难以扩展的耦合。
 
-## Migration Priorities
+## 迁移优先级
 
-Migrate in this order unless a specific task says otherwise:
+除非某个具体任务另有说明，否则按以下顺序迁移：
 
-1. display
-2. touch
-3. LVGL/UI assets and screen framework
-4. service stubs
-5. time/SNTP
-6. Wi-Fi/weather
+1. 显示
+2. 触摸
+3. LVGL / UI 资源与页面框架
+4. service stub
+5. 时间 / SNTP
+6. Wi-Fi / 天气
 7. DHT11
 8. WS2812
-9. SD/MP3/I2S
+9. SD / MP3 / I2S
 
-This keeps the platform bootable and debuggable at each milestone.
+这样可以保证每个里程碑阶段平台都仍然可启动、可调试。
 
-## Required Cleanup Before Landing Old Code
+## 接纳旧代码前必须完成的清理
 
-Before migrated code is accepted into `clock_codex`, do these cleanups:
+在迁移代码被接纳进 `clock_codex` 之前，必须完成以下清理：
 
-1. remove cross-directory relative includes
-2. remove hardcoded credentials, keys, or board constants from `.c` files
-3. remove direct UI-to-driver coupling
-4. move raw hardware configuration into `board_config.h` or `app_config.h`
-5. rename files or symbols if ownership is unclear in the new structure
+1. 删除跨目录相对 include
+2. 删除 `.c` 文件中硬编码的凭据、key 或板级常量
+3. 删除 UI 到驱动的直接耦合
+4. 将原始硬件配置移入 `board_config.h` 或 `app_config.h`
+5. 如果在新结构中所有权不清晰，就重命名文件或符号
 
-Do not defer these cleanups if they would preserve the exact coupling we are trying to eliminate.
+如果这些清理会保留我们正试图消除的耦合，就不要把它们延期。
 
-## Allowed Migration Patterns
+## 允许的迁移模式
 
-These patterns are allowed and encouraged:
+以下模式是允许且推荐的：
 
-- copy working driver logic, then wrap it behind a smaller component API
-- keep temporary service stubs while real modules are not yet reconnected
-- split one old file into multiple new files when it mixes UI, service, and driver concerns
-- keep behavior-compatible defaults if they help the new project boot sooner
+- 复制可工作的驱动逻辑，然后用更小的组件 API 包起来
+- 当真实模块尚未重新接回时，先保留临时 service stub
+- 如果一个旧文件混杂了 UI、service 与 driver 职责，就将其拆成多个新文件
+- 如果某些默认行为有助于让新项目更早启动，可暂时保持行为兼容
 
-## Forbidden Migration Patterns
+## 禁止的迁移模式
 
-Do not do the following:
+不要做以下事情：
 
-- copy the old folder tree directly into the new project
-- preserve `../` or `../../` include chains
-- let `app_ui` include old hardware module headers directly
-- hardcode Wi-Fi SSID, password, API keys, or pin maps inside migrated feature files
-- move old debug code, commented experiments, or dead helpers unless they are still needed
-- add new functionality while a module is still being structurally cleaned up
+- 直接把旧文件夹树复制进新项目
+- 保留 `../` 或 `../../` 这种 include 链
+- 让 `app_ui` 直接 include 旧硬件模块头文件
+- 在迁移后的功能文件中硬编码 Wi-Fi SSID、密码、API Key 或引脚映射
+- 把旧调试代码、注释掉的实验代码或废弃 helper 一起迁进来，除非它们仍然需要
+- 当模块还在进行结构清理时，同时往里面加入新功能
 
-## Validation Rules Per Module
+## 各模块验证规则
 
-Each migrated module must pass three checks before the next module starts:
+每个已迁移模块在开始下一个模块之前，都必须通过以下三项检查：
 
-1. it compiles inside `clock_codex`
-2. startup remains stable and the device does not crash during bring-up
-3. the key user-visible interaction for that module works, or a deliberate stub is in place
+1. 它能在 `clock_codex` 中成功编译
+2. 启动仍然稳定，设备在 bring-up 期间不会崩溃
+3. 该模块关键的用户可见交互能够工作，或已有明确的 stub 顶上
 
-Examples:
+示例：
 
-- display: screen initializes and shows a valid frame
-- touch: tap input reaches LVGL and drives at least one interaction
-- UI: screens load without missing assets or unresolved symbols
-- service stub: UI receives placeholder data instead of dereferencing old globals
+- display：屏幕能初始化并显示有效画面
+- touch：点击事件能传入 LVGL，并至少驱动一个交互
+- UI：页面能加载，无资源缺失或未解析符号
+- service stub：UI 能拿到占位数据，而不是去解引用旧全局变量
 
-## Special Rules for Old Project Artifacts
+## 关于旧项目产物的特殊规则
 
-Do not migrate generated or environment-specific artifacts:
+不要迁移生成物或环境相关产物：
 
 - `.pio/`
 - `build/`
-- generated `sdkconfig.*` snapshots unless a specific setting is intentionally extracted
+- 生成的 `sdkconfig.*` 快照，除非有某项设置被有意提取出来
 
-Instead, copy only the settings that are still needed into tracked configuration files.
+正确做法是只复制那些仍然需要的设置，并放入受跟踪的配置文件中。
 
-## Default Decision Rule
+## 默认决策规则
 
-If there is a conflict between "copying old behavior fast" and "keeping the new boundary clean",
-prefer the cleaner boundary unless it blocks first boot. If first boot would be blocked, use the
-smallest temporary shim possible and document it in the commit or task notes.
+如果“快速复制旧行为”和“保持新边界整洁”之间发生冲突，
+除非会阻塞首次启动，否则优先选择更干净的边界。
+如果首次启动确实会被阻塞，就使用尽可能小的临时 shim，并在提交或任务说明中记录下来。

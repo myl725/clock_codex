@@ -1,7 +1,6 @@
 #include "app_music_service.h"
 
 #include <dirent.h>
-#include <math.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -12,8 +11,9 @@
 
 #include "app_config.h"
 #include "app_music_download.h"
-#include "app_music_mp3.h"
-#include "app_music_wav.h"
+#include "app_music_playback_source.h"
+#include "app_music_source.h"
+#include "app_music_usb_stream.h"
 #include "audio_output.h"
 #include "board_config.h"
 #include "driver/sdspi_host.h"
@@ -31,9 +31,9 @@
 #define APP_MUSIC_BUFFER_FRAMES 480
 #define APP_MUSIC_VOLUME_PERCENT 14
 #define APP_MUSIC_TIMEOUT_MS 500
-#define APP_MUSIC_PI 3.14159265358979323846f
 #define APP_MUSIC_DIAG_MAGIC 0x4D555349UL
 #define APP_MUSIC_MAX_WAV_FILES 8
+#define APP_MUSIC_USB_START_THRESHOLD_FRAMES (APP_MUSIC_BUFFER_FRAMES * 2U)
 
 typedef enum {
     APP_MUSIC_DIAG_STAGE_UNKNOWN = 0,
@@ -245,6 +245,20 @@ static void app_music_service_download_status_cb(const char *status_text, void *
     app_music_service_set_status_text(status_text);
 }
 
+static esp_err_t app_music_service_mount_sd_if_needed(void);
+
+static esp_err_t app_music_service_mount_sd_action(void *ctx)
+{
+    (void)ctx;
+    return app_music_service_mount_sd_if_needed();
+}
+
+static esp_err_t app_music_service_refresh_sd_listing_action(void *ctx)
+{
+    (void)ctx;
+    return app_music_service_refresh_wav_files();
+}
+
 static void app_music_service_reset_playback_counters(app_music_diag_stage_t stage)
 {
     s_music_diag.successful_writes = 0;
@@ -283,20 +297,6 @@ static bool app_music_service_has_audio_extension(const char *name)
     }
 
     return strcasecmp(extension, ".wav") == 0 || strcasecmp(extension, ".mp3") == 0;
-}
-
-static bool app_music_service_path_is_wav(const char *path)
-{
-    const char *extension = strrchr(path, '.');
-
-    return extension != NULL && strcasecmp(extension, ".wav") == 0;
-}
-
-static bool app_music_service_path_is_mp3(const char *path)
-{
-    const char *extension = strrchr(path, '.');
-
-    return extension != NULL && strcasecmp(extension, ".mp3") == 0;
 }
 
 static void app_music_service_apply_selected_wav_locked(void)
@@ -465,13 +465,63 @@ esp_err_t app_music_service_refresh_wav_files(void)
     return ESP_OK;
 }
 
-static float app_music_service_get_frequency(app_music_tone_t tone)
+static esp_err_t app_music_service_configure_output_for_source(
+    app_music_playback_source_t *active_source,
+    uint32_t *out_sample_rate_hz
+)
 {
-    if (!app_music_service_tone_is_valid(tone)) {
-        return TONE_TABLE[APP_MUSIC_TONE_A4].frequency_hz;
+    esp_err_t err;
+    uint32_t sample_rate_hz;
+
+    ESP_RETURN_ON_FALSE(active_source != NULL, ESP_ERR_INVALID_ARG, TAG, "active_source is null");
+
+    sample_rate_hz = app_music_playback_source_get_sample_rate(active_source);
+    err = audio_output_set_sample_rate(sample_rate_hz);
+    if (err != ESP_OK) {
+        return err;
     }
 
-    return TONE_TABLE[tone].frequency_hz;
+    app_music_service_set_snapshot_sample_rate(sample_rate_hz);
+    if (out_sample_rate_hz != NULL) {
+        *out_sample_rate_hz = sample_rate_hz;
+    }
+    return ESP_OK;
+}
+
+static uint32_t app_music_service_default_sample_rate_for_source(app_music_source_t source)
+{
+    if (source == APP_MUSIC_SOURCE_USB_AUDIO) {
+        uint32_t usb_rate_hz = app_music_usb_stream_get_sample_rate();
+        return usb_rate_hz > 0U ? usb_rate_hz : 48000U;
+    }
+
+    return BOARD_AUDIO_OUTPUT_SAMPLE_RATE;
+}
+
+static const char *app_music_service_starting_status_text(app_music_source_t source)
+{
+    switch (source) {
+        case APP_MUSIC_SOURCE_TONE:
+            return "Starting tone playback";
+        case APP_MUSIC_SOURCE_SD_WAV:
+            return "Starting SD audio playback";
+        case APP_MUSIC_SOURCE_USB_AUDIO:
+            return "Starting USB audio playback";
+        default:
+            return "Starting audio playback";
+    }
+}
+
+static bool app_music_service_usb_stream_ready_to_start(size_t *out_buffered_frames)
+{
+    app_music_usb_stream_status_t status = {0};
+
+    app_music_usb_stream_get_status(&status);
+    if (out_buffered_frames != NULL) {
+        *out_buffered_frames = status.buffered_frames;
+    }
+
+    return status.active && status.buffered_frames >= APP_MUSIC_USB_START_THRESHOLD_FRAMES;
 }
 
 static void app_music_service_copy_snapshot(app_music_snapshot_t *out_snapshot)
@@ -514,75 +564,20 @@ void app_music_service_log_boot_diagnostics(void)
     app_music_service_diag_mark(APP_MUSIC_DIAG_STAGE_BOOT, ESP_OK);
 }
 
-static void app_music_service_fill_buffer(int16_t *buffer, size_t frame_count, float *phase, float frequency_hz, uint8_t volume_percent)
-{
-    float amplitude = 32767.0f * ((float)volume_percent / 100.0f);
-    float phase_step = (2.0f * APP_MUSIC_PI * frequency_hz) / (float)audio_output_get_sample_rate();
-
-    for (size_t i = 0; i < frame_count; i++) {
-        int16_t sample = (int16_t)(sinf(*phase) * amplitude);
-        buffer[i * 2] = sample;
-        buffer[(i * 2) + 1] = sample;
-
-        *phase += phase_step;
-        if (*phase >= (2.0f * APP_MUSIC_PI)) {
-            *phase -= (2.0f * APP_MUSIC_PI);
-        }
-    }
-}
-
-static esp_err_t app_music_service_fill_wav_buffer(
-    const app_music_snapshot_t *snapshot,
-    app_music_wav_file_t *wav_file,
-    int16_t *sample_buffer,
-    size_t *out_frame_count,
-    bool *out_finished
-)
-{
-    size_t frame_count = 0;
-    bool reached_eof = false;
-    esp_err_t err;
-
-    ESP_RETURN_ON_FALSE(snapshot != NULL, ESP_ERR_INVALID_ARG, TAG, "snapshot is null");
-    ESP_RETURN_ON_FALSE(wav_file != NULL, ESP_ERR_INVALID_ARG, TAG, "wav_file is null");
-    ESP_RETURN_ON_FALSE(sample_buffer != NULL, ESP_ERR_INVALID_ARG, TAG, "sample_buffer is null");
-
-    err = app_music_wav_read_stereo_frames(
-        wav_file,
-        sample_buffer,
-        APP_MUSIC_BUFFER_FRAMES,
-        &frame_count,
-        &reached_eof
-    );
-    if (err != ESP_OK) {
-        return err;
-    }
-
-    if (frame_count < APP_MUSIC_BUFFER_FRAMES) {
-        memset(sample_buffer + (frame_count * 2), 0, (APP_MUSIC_BUFFER_FRAMES - frame_count) * 2 * sizeof(int16_t));
-    }
-
-    if (out_frame_count != NULL) {
-        *out_frame_count = frame_count;
-    }
-    if (out_finished != NULL) {
-        *out_finished = reached_eof;
-    }
-    return ESP_OK;
-}
-
 static void app_music_service_task(void *arg)
 {
     (void)arg;
 
     int16_t *sample_buffer = calloc(APP_MUSIC_BUFFER_FRAMES * 2, sizeof(int16_t));
-    app_music_wav_file_t wav_file = {0};
-    app_music_mp3_file_t mp3_file = {0};
-    float phase = 0.0f;
+    app_music_playback_source_t active_source = {0};
     bool output_active = false;
-    bool wav_open = false;
-    bool mp3_open = false;
     uint32_t target_sample_rate_hz = BOARD_AUDIO_OUTPUT_SAMPLE_RATE;
+    const app_music_playback_source_env_t source_env = {
+        .ensure_sd_ready = app_music_service_mount_sd_action,
+        .refresh_sd_listing = app_music_service_refresh_sd_listing_action,
+        .status_cb = app_music_service_download_status_cb,
+        .ctx = NULL,
+    };
 
     if (sample_buffer == NULL) {
         ESP_LOGE(TAG, "failed to allocate tone buffer");
@@ -597,14 +592,7 @@ static void app_music_service_task(void *arg)
 
         if (!snapshot.ready || snapshot.state != APP_MUSIC_STATE_PLAYING) {
             app_music_service_diag_mark(APP_MUSIC_DIAG_STAGE_IDLE, ESP_OK);
-            if (wav_open) {
-                app_music_wav_close(&wav_file);
-            }
-            wav_open = false;
-            if (mp3_open) {
-                app_music_mp3_close(&mp3_file);
-            }
-            mp3_open = false;
+            app_music_playback_source_close(&active_source);
             if (output_active) {
                 app_music_service_diag_mark(APP_MUSIC_DIAG_STAGE_STOP_OUTPUT, ESP_OK);
             }
@@ -612,178 +600,83 @@ static void app_music_service_task(void *arg)
                 ESP_LOGW(TAG, "failed to stop audio output cleanly");
             }
             output_active = false;
-            phase = 0.0f;
             vTaskDelay(pdMS_TO_TICKS(30));
             continue;
         }
 
-        if (snapshot.source == APP_MUSIC_SOURCE_TONE && !output_active) {
-            err = audio_output_set_sample_rate(BOARD_AUDIO_OUTPUT_SAMPLE_RATE);
+        if (!app_music_playback_source_is_open(&active_source)) {
+            err = app_music_playback_source_open(&active_source, &snapshot, &source_env);
             if (err != ESP_OK) {
+                if (snapshot.source == APP_MUSIC_SOURCE_TONE) {
+                    app_music_service_set_status_text_fmt("Tone setup failed: %s", esp_err_to_name(err));
+                } else {
+                    ESP_LOGE(TAG, "failed to open audio source %s: %s", snapshot.wav_path, esp_err_to_name(err));
+                }
+                app_music_service_diag_mark(APP_MUSIC_DIAG_STAGE_FILL_BUFFER, err);
+                app_music_service_set_state(APP_MUSIC_STATE_STOPPED);
+                vTaskDelay(pdMS_TO_TICKS(100));
+                continue;
+            }
+
+            err = app_music_service_configure_output_for_source(&active_source, &target_sample_rate_hz);
+            if (err != ESP_OK) {
+                app_music_playback_source_close(&active_source);
                 app_music_service_set_status_text_fmt("Audio rate failed: %s", esp_err_to_name(err));
                 app_music_service_diag_mark(APP_MUSIC_DIAG_STAGE_FILL_BUFFER, err);
                 app_music_service_set_state(APP_MUSIC_STATE_STOPPED);
                 vTaskDelay(pdMS_TO_TICKS(100));
                 continue;
             }
-            target_sample_rate_hz = audio_output_get_sample_rate();
-            app_music_service_set_snapshot_sample_rate(target_sample_rate_hz);
+        }
+
+        if (app_music_playback_source_is_tone(&active_source)) {
+            err = app_music_playback_source_update(&active_source, &snapshot);
+            if (err != ESP_OK) {
+                app_music_service_set_status_text_fmt("Tone update failed: %s", esp_err_to_name(err));
+                app_music_service_diag_mark(APP_MUSIC_DIAG_STAGE_FILL_BUFFER, err);
+                app_music_service_set_state(APP_MUSIC_STATE_STOPPED);
+                vTaskDelay(pdMS_TO_TICKS(100));
+                continue;
+            }
+        }
+
+        if (app_music_playback_source_is_usb(&active_source) && !output_active) {
+            size_t buffered_frames = 0U;
+            if (!app_music_service_usb_stream_ready_to_start(&buffered_frames)) {
+                app_music_service_set_status_text_fmt(
+                    "Waiting for USB audio (%u/%u frames)",
+                    (unsigned)buffered_frames,
+                    (unsigned)APP_MUSIC_USB_START_THRESHOLD_FRAMES
+                );
+                vTaskDelay(pdMS_TO_TICKS(10));
+                continue;
+            }
         }
 
         app_music_service_diag_mark(APP_MUSIC_DIAG_STAGE_FILL_BUFFER, ESP_OK);
-        if (snapshot.source == APP_MUSIC_SOURCE_TONE) {
-            app_music_service_fill_buffer(
-                sample_buffer,
-                APP_MUSIC_BUFFER_FRAMES,
-                &phase,
-                app_music_service_get_frequency(snapshot.tone),
-                snapshot.volume_percent
-            );
-        } else {
+        {
             size_t file_frame_count = 0;
             bool file_finished = false;
 
-            if (!wav_open && !mp3_open) {
-                err = app_music_service_mount_sd_if_needed();
-                if (err != ESP_OK) {
-                    app_music_service_set_status_text_fmt("SD mount failed: %s", esp_err_to_name(err));
-                    ESP_LOGE(TAG, "failed to mount sd card: %s", esp_err_to_name(err));
-                    app_music_service_diag_mark(APP_MUSIC_DIAG_STAGE_FILL_BUFFER, err);
-                    app_music_service_set_state(APP_MUSIC_STATE_STOPPED);
-                    vTaskDelay(pdMS_TO_TICKS(100));
-                    continue;
-                }
-
-                if (app_music_service_path_is_wav(snapshot.wav_path)) {
-                    app_music_service_set_status_text("Opening WAV file");
-                    err = app_music_wav_open(snapshot.wav_path, &wav_file);
-                    if (err == ESP_ERR_NOT_FOUND) {
-                        app_music_service_set_status_text("WAV missing, downloading");
-                        ESP_LOGW(TAG, "wav file missing, downloading default test wav");
-                        err = app_music_download_default_wav_to_sd(
-                            snapshot.wav_path,
-                            app_music_service_download_status_cb,
-                            NULL
-                        );
-                        if (err == ESP_OK) {
-                            app_music_service_refresh_wav_files();
-                            app_music_service_set_status_text("Opening downloaded WAV");
-                            err = app_music_wav_open(snapshot.wav_path, &wav_file);
-                        }
-                    }
-                    app_music_service_set_status_text("Validating WAV header");
-                    if (err != ESP_OK) {
-                        app_music_service_set_status_text_fmt("WAV open failed: %s", esp_err_to_name(err));
-                        ESP_LOGE(TAG, "failed to open wav file %s: %s", snapshot.wav_path, esp_err_to_name(err));
-                        app_music_service_diag_mark(APP_MUSIC_DIAG_STAGE_FILL_BUFFER, err);
-                        app_music_service_set_state(APP_MUSIC_STATE_STOPPED);
-                        vTaskDelay(pdMS_TO_TICKS(100));
-                        continue;
-                    }
-                    target_sample_rate_hz = wav_file.sample_rate_hz;
-                    wav_open = true;
-                } else if (app_music_service_path_is_mp3(snapshot.wav_path)) {
-                    app_music_service_set_status_text("Opening MP3 file");
-                    err = app_music_mp3_open(snapshot.wav_path, &mp3_file);
-                    if (err != ESP_OK) {
-                        app_music_service_set_status_text_fmt(
-                            "MP3 open failed: %s (%s)",
-                            esp_err_to_name(err),
-                            app_music_mp3_get_last_detail()
-                        );
-                        ESP_LOGE(TAG, "failed to open mp3 file %s: %s", snapshot.wav_path, esp_err_to_name(err));
-                        app_music_service_diag_mark(APP_MUSIC_DIAG_STAGE_FILL_BUFFER, err);
-                        app_music_service_set_state(APP_MUSIC_STATE_STOPPED);
-                        vTaskDelay(pdMS_TO_TICKS(100));
-                        continue;
-                    }
-                    target_sample_rate_hz = mp3_file.sample_rate_hz;
-                    mp3_open = true;
-                } else {
-                    app_music_service_set_status_text("Audio file type not supported");
-                    app_music_service_diag_mark(APP_MUSIC_DIAG_STAGE_FILL_BUFFER, ESP_ERR_NOT_SUPPORTED);
-                    app_music_service_set_state(APP_MUSIC_STATE_STOPPED);
-                    vTaskDelay(pdMS_TO_TICKS(100));
-                    continue;
-                }
-
-                err = audio_output_set_sample_rate(target_sample_rate_hz);
-                if (err != ESP_OK) {
-                    if (wav_open) {
-                        app_music_wav_close(&wav_file);
-                    }
-                    if (mp3_open) {
-                        app_music_mp3_close(&mp3_file);
-                    }
-                    wav_open = false;
-                    mp3_open = false;
-                    app_music_service_set_status_text_fmt("Audio rate failed: %s", esp_err_to_name(err));
-                    app_music_service_diag_mark(APP_MUSIC_DIAG_STAGE_FILL_BUFFER, err);
-                    app_music_service_set_state(APP_MUSIC_STATE_STOPPED);
-                    vTaskDelay(pdMS_TO_TICKS(100));
-                    continue;
-                }
-                app_music_service_set_snapshot_sample_rate(target_sample_rate_hz);
+            err = app_music_playback_source_read(
+                &active_source,
+                sample_buffer,
+                APP_MUSIC_BUFFER_FRAMES,
+                &file_frame_count,
+                &file_finished,
+                &source_env
+            );
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "failed to read audio source frames: %s", esp_err_to_name(err));
+                app_music_playback_source_close(&active_source);
+                app_music_service_diag_mark(APP_MUSIC_DIAG_STAGE_FILL_BUFFER, err);
+                app_music_service_set_state(APP_MUSIC_STATE_STOPPED);
+                vTaskDelay(pdMS_TO_TICKS(100));
+                continue;
             }
 
-            if (wav_open) {
-                err = app_music_service_fill_wav_buffer(
-                    &snapshot,
-                    &wav_file,
-                    sample_buffer,
-                    &file_frame_count,
-                    &file_finished
-                );
-                if (err != ESP_OK) {
-                    app_music_service_set_status_text_fmt("WAV read failed: %s", esp_err_to_name(err));
-                    ESP_LOGE(TAG, "failed to read wav frames: %s", esp_err_to_name(err));
-                    app_music_wav_close(&wav_file);
-                    wav_open = false;
-                    app_music_service_diag_mark(APP_MUSIC_DIAG_STAGE_FILL_BUFFER, err);
-                    app_music_service_set_state(APP_MUSIC_STATE_STOPPED);
-                    vTaskDelay(pdMS_TO_TICKS(100));
-                    continue;
-                }
-            } else if (mp3_open) {
-                err = app_music_mp3_read_stereo_frames(
-                    &mp3_file,
-                    sample_buffer,
-                    APP_MUSIC_BUFFER_FRAMES,
-                    &file_frame_count,
-                    &file_finished
-                );
-                if (err != ESP_OK) {
-                    app_music_service_set_status_text_fmt(
-                        "MP3 read failed: %s (%s)",
-                        esp_err_to_name(err),
-                        app_music_mp3_get_last_detail()
-                    );
-                    ESP_LOGE(TAG, "failed to read mp3 frames: %s", esp_err_to_name(err));
-                    app_music_mp3_close(&mp3_file);
-                    mp3_open = false;
-                    app_music_service_diag_mark(APP_MUSIC_DIAG_STAGE_FILL_BUFFER, err);
-                    app_music_service_set_state(APP_MUSIC_STATE_STOPPED);
-                    vTaskDelay(pdMS_TO_TICKS(100));
-                    continue;
-                }
-                if (file_frame_count < APP_MUSIC_BUFFER_FRAMES) {
-                    memset(
-                        sample_buffer + (file_frame_count * 2U),
-                        0,
-                        (APP_MUSIC_BUFFER_FRAMES - file_frame_count) * 2U * sizeof(int16_t)
-                    );
-                }
-            }
-
-            if (file_frame_count == 0U && file_finished) {
-                if (wav_open) {
-                    app_music_wav_close(&wav_file);
-                }
-                if (mp3_open) {
-                    app_music_mp3_close(&mp3_file);
-                }
-                wav_open = false;
-                mp3_open = false;
+            if (app_music_playback_source_is_file(&active_source) && file_frame_count == 0U && file_finished) {
+                app_music_playback_source_close(&active_source);
                 app_music_service_set_status_text("File playback finished");
                 app_music_service_set_state(APP_MUSIC_STATE_STOPPED);
                 vTaskDelay(pdMS_TO_TICKS(30));
@@ -811,13 +704,11 @@ static void app_music_service_task(void *arg)
                 continue;
             }
             output_active = true;
-            app_music_service_set_status_text(
-                snapshot.source == APP_MUSIC_SOURCE_TONE ? "Playing tone" : "Playing SD audio"
-            );
+            app_music_service_set_status_text(app_music_playback_source_playing_status_text(snapshot.source));
             s_music_diag.successful_writes++;
             s_render_loop_count++;
             if (s_render_loop_count <= 4 || (s_render_loop_count % 32U) == 0U) {
-                ESP_LOGI(
+                ESP_LOGD(
                     TAG,
                     "render loop=%lu state=%s source=%s tone=%s volume=%u primed",
                     (unsigned long)s_render_loop_count,
@@ -832,7 +723,7 @@ static void app_music_service_task(void *arg)
         app_music_service_diag_mark(APP_MUSIC_DIAG_STAGE_WRITE_BUFFER, ESP_OK);
         s_render_loop_count++;
         if (s_render_loop_count <= 4 || (s_render_loop_count % 32U) == 0U) {
-            ESP_LOGI(
+            ESP_LOGD(
                 TAG,
                 "render loop=%lu state=%s source=%s tone=%s volume=%u stack_hw=%lu",
                 (unsigned long)s_render_loop_count,
@@ -846,14 +737,7 @@ static void app_music_service_task(void *arg)
         err = audio_output_write_stereo(sample_buffer, APP_MUSIC_BUFFER_FRAMES, APP_MUSIC_TIMEOUT_MS);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "audio write failed: %s", esp_err_to_name(err));
-            if (wav_open) {
-                app_music_wav_close(&wav_file);
-            }
-            wav_open = false;
-            if (mp3_open) {
-                app_music_mp3_close(&mp3_file);
-            }
-            mp3_open = false;
+            app_music_playback_source_close(&active_source);
             app_music_service_set_status_text_fmt("Audio write failed: %s", esp_err_to_name(err));
             app_music_service_diag_mark(APP_MUSIC_DIAG_STAGE_WRITE_BUFFER, err);
             app_music_service_set_state(APP_MUSIC_STATE_STOPPED);
@@ -919,9 +803,7 @@ esp_err_t app_music_service_play(void)
     s_snapshot.state = APP_MUSIC_STATE_PLAYING;
     app_music_service_reset_playback_counters(APP_MUSIC_DIAG_STAGE_PLAY_REQUEST);
     xSemaphoreGive(s_music_mutex);
-    app_music_service_set_status_text(
-        s_snapshot.source == APP_MUSIC_SOURCE_TONE ? "Starting tone playback" : "Starting SD audio playback"
-    );
+    app_music_service_set_status_text(app_music_service_starting_status_text(s_snapshot.source));
     ESP_LOGI(TAG, "play request accepted");
     return ESP_OK;
 }
@@ -953,7 +835,7 @@ esp_err_t app_music_service_toggle_playback(void)
     source = s_snapshot.source;
     if (new_state == APP_MUSIC_STATE_PLAYING) {
         app_music_service_reset_playback_counters(APP_MUSIC_DIAG_STAGE_TOGGLE_REQUEST);
-        status_text = (source == APP_MUSIC_SOURCE_TONE) ? "Starting tone playback" : "Starting SD audio playback";
+        status_text = app_music_service_starting_status_text(source);
     } else {
         status_text = "Playback stopped";
     }
@@ -973,13 +855,13 @@ esp_err_t app_music_service_set_source(app_music_source_t source)
     if (s_snapshot.state == APP_MUSIC_STATE_PLAYING) {
         s_snapshot.state = APP_MUSIC_STATE_STOPPED;
     }
-    if (source == APP_MUSIC_SOURCE_TONE) {
-        s_snapshot.sample_rate_hz = BOARD_AUDIO_OUTPUT_SAMPLE_RATE;
-    }
+    s_snapshot.sample_rate_hz = app_music_service_default_sample_rate_for_source(source);
     xSemaphoreGive(s_music_mutex);
 
     if (source == APP_MUSIC_SOURCE_TONE) {
         app_music_service_set_status_text("Tone mode selected");
+    } else if (source == APP_MUSIC_SOURCE_USB_AUDIO) {
+        app_music_service_set_status_text("USB audio mode selected");
     } else {
         ESP_RETURN_ON_ERROR(app_music_service_refresh_wav_files(), TAG, "failed to refresh wav files");
     }
@@ -1099,6 +981,52 @@ void app_music_service_get_diagnostics(app_music_diag_info_t *out_diag)
     out_diag->last_failure_stage = s_music_diag.last_failure_stage;
 }
 
+esp_err_t app_music_service_usb_begin(uint32_t sample_rate_hz)
+{
+    ESP_RETURN_ON_ERROR(app_music_usb_stream_start(sample_rate_hz), TAG, "failed to start usb audio stream");
+
+    if (s_music_mutex != NULL) {
+        xSemaphoreTake(s_music_mutex, portMAX_DELAY);
+        if (s_snapshot.source == APP_MUSIC_SOURCE_USB_AUDIO) {
+            s_snapshot.sample_rate_hz = sample_rate_hz;
+        }
+        xSemaphoreGive(s_music_mutex);
+    }
+
+    return ESP_OK;
+}
+
+esp_err_t app_music_service_usb_push_stereo(
+    const int16_t *samples,
+    size_t frame_count,
+    size_t *out_accepted_frames
+)
+{
+    return app_music_usb_stream_push_stereo(samples, frame_count, out_accepted_frames);
+}
+
+void app_music_service_usb_end(void)
+{
+    app_music_usb_stream_stop();
+}
+
+void app_music_service_usb_get_status(app_music_usb_audio_status_t *out_status)
+{
+    app_music_usb_stream_status_t usb_status = {0};
+
+    if (out_status == NULL) {
+        return;
+    }
+
+    app_music_usb_stream_get_status(&usb_status);
+    out_status->active = usb_status.active;
+    out_status->sample_rate_hz = usb_status.sample_rate_hz;
+    out_status->buffered_frames = usb_status.buffered_frames;
+    out_status->capacity_frames = usb_status.capacity_frames;
+    out_status->underrun_count = usb_status.underrun_count;
+    out_status->overflow_count = usb_status.overflow_count;
+}
+
 const char *app_music_service_state_to_text(app_music_state_t state)
 {
     switch (state) {
@@ -1118,6 +1046,8 @@ const char *app_music_service_source_to_text(app_music_source_t source)
             return "Tone";
         case APP_MUSIC_SOURCE_SD_WAV:
             return "SD Audio";
+        case APP_MUSIC_SOURCE_USB_AUDIO:
+            return "USB Audio";
         default:
             return "Unknown";
     }

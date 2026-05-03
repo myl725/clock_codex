@@ -1,20 +1,20 @@
-# INMP441 Minimal Test
+# INMP441 最小测试
 
-This is the smallest useful hardware validation for `INMP441 -> ESP32-S3 -> serial log`.
+这是用于验证 `INMP441 -> ESP32-S3 -> 串口日志` 这条链路是否通的最小有用硬件测试。
 
-It does not use:
+它不会使用：
 
 - LVGL
-- display
-- touch
+- 显示
+- 触摸
 - `esp-sr`
-- wake word
+- 唤醒词
 
-It only checks whether raw microphone samples are present.
+它只检查原始麦克风采样是否存在。
 
-## Wiring
+## 接线
 
-Use only these connections:
+只连接以下线路：
 
 - `INMP441 VDD -> 3.3V`
 - `INMP441 GND -> GND`
@@ -23,24 +23,24 @@ Use only these connections:
 - `INMP441 SD/DOUT -> GPIO4`
 - `INMP441 L/R -> GND`
 
-If this version still reads zero, try one more time with:
+如果这种接法读出来仍然全是 0，再试一次：
 
 - `INMP441 L/R -> 3.3V`
 
-Do not connect:
+不要连接：
 
-- display
-- touch
+- 显示
+- 触摸
 - MAX98357
-- any other device on the same I2S lines
+- 任何其他接在同一组 I2S 线上设备
 
-## How To Use
+## 使用方法
 
-Temporarily replace [src/main.c](/C:/Users/PC/Desktop/clock_codex/src/main.c) with the standalone program from:
+临时将 [src/main.c](/C:/Users/PC/Desktop/clock_codex/src/main.c) 替换为下列独立程序：
 
 - [inmp441_minimal_main.c](/C:/Users/PC/Desktop/clock_codex/docs/inmp441_minimal_main.c)
 
-Then build and upload:
+然后构建并上传：
 
 ```powershell
 pio run
@@ -48,28 +48,27 @@ pio run -t upload
 pio device monitor --port COM3 --baud 115200
 ```
 
-If your board is not on `COM3`, replace the port with the correct one.
+如果你的开发板不在 `COM3`，请替换为正确端口。
 
-## Expected Output
+## 预期输出
 
-When the microphone path is working, you should see logs like:
+当麦克风路径正常工作时，你应看到类似以下日志：
 
 ```text
 raw_peak=18432 sample0=512 sample1=-384 sample2=640
 raw_peak=22176 sample0=448 sample1=-576 sample2=704
 ```
 
-If the output stays like this:
+如果输出始终像这样：
 
 ```text
 raw_peak=0 sample0=0 sample1=0 sample2=0
 ```
 
-then the raw I2S microphone data path is still not working, and the problem is almost certainly hardware-side:
+那么原始 I2S 麦克风数据路径仍然没有工作，问题几乎可以确定在硬件侧：
 
-- `SD` not really reaching `GPIO4`
-- `BCLK` / `WS` not connected
-- `L/R` slot mismatch
-- microphone module fault
-- another device still loading the same lines
-
+- `SD` 没有真正连到 `GPIO4`
+- `BCLK` / `WS` 没有接通
+- `L/R` 声道槽位不匹配
+- 麦克风模块本身故障
+- 同一组线路上仍有其他设备在加载干扰

@@ -1,72 +1,71 @@
-# clock_codex Coding Rules
+# clock_codex 编码规则
 
-## Purpose
+## 目的
 
-This document defines coding conventions that keep `clock_codex` maintainable while the project is
-rebuilt from the older ESP-IDF/LVGL codebase.
+本文定义了在将旧 ESP-IDF/LVGL 代码库重构为 `clock_codex` 的过程中，为保持项目可维护性所需遵循的编码约定。
 
-## Include Rules
+## include 规则
 
-- Use component public headers instead of cross-directory relative includes.
-- Do not add includes such as `../../lib/...` or `../other_module/...` in new code.
-- Keep private headers private to their component unless there is a deliberate public API reason.
-- Prefer `#include "component_header.h"` for project headers and angle brackets for ESP-IDF/system headers.
+- 使用组件公开头文件，不要跨目录相对 include。
+- 不要在新代码中加入 `../../lib/...` 或 `../other_module/...` 这类 include。
+- 私有头文件应保持在所属组件内，除非有明确的公共 API 理由。
+- 项目头文件优先使用 `#include "component_header.h"`，ESP-IDF / 系统头文件使用尖括号。
 
-## Naming Rules
+## 命名规则
 
-- Use lowercase snake_case for C functions, variables, and file names.
-- Use uppercase snake_case for macros and compile-time constants.
-- Use short, explicit prefixes for exported symbols when ownership is not obvious.
-- Name files after the capability they own, not after temporary experiments.
+- C 函数、变量和文件名使用小写蛇形命名。
+- 宏和编译期常量使用大写蛇形命名。
+- 对导出符号而言，如果所有权不够直观，应使用简短且明确的前缀。
+- 文件应按其所负责的能力命名，而不是按临时实验命名。
 
-## Global State Rules
+## 全局状态规则
 
-- Add global variables only when component lifetime truly requires them.
-- Every global must have a clear owner component and a documented reason to exist.
-- Keep hardware handles, queues, and synchronization objects inside the component that owns them.
-- Do not let UI files access driver-owned globals directly.
+- 只有在组件生命周期确实需要时才增加全局变量。
+- 每个全局变量都必须有清晰的所属组件与存在理由说明。
+- 硬件句柄、队列与同步对象应留在拥有它们的组件内部。
+- 不要让 UI 文件直接访问驱动层持有的全局变量。
 
-## Task and Timer Rules
+## 任务与定时器规则
 
-- Create long-lived FreeRTOS tasks only in `src` startup orchestration or inside the owning service module.
-- Do not create long-lived background tasks from UI screen files or widget callbacks.
-- LVGL timers that update page presentation may live in `app_ui`, but they must only drive UI behavior.
-- If a task exists only to wrap a hardware feature, place its implementation in the service that owns that feature.
+- 长生命周期的 FreeRTOS 任务只能在 `src` 启动编排中，或在拥有该功能的 service 模块内部创建。
+- 不要从 UI 页面文件或控件回调中创建长期后台任务。
+- 用于更新页面显示的 LVGL 定时器可以放在 `app_ui`，但它们只能驱动 UI 行为。
+- 如果某个任务仅仅是为了包裹一个硬件功能，那么它的实现应放在拥有该功能的 service 中。
 
-## Configuration Rules
+## 配置规则
 
-- Put board pins, display dimensions, bus IDs, and calibration defaults in `board_config.h`.
-- Put Wi-Fi credentials, weather settings, and feature-level app constants in `app_config.h`.
-- Put ESP-IDF framework toggles in `sdkconfig.defaults`.
-- Do not leave production values hardcoded in feature implementation files.
+- 板级引脚、显示尺寸、总线 ID 与校准默认值放在 `board_config.h`。
+- Wi-Fi 凭据、天气设置与功能级应用常量放在 `app_config.h`。
+- ESP-IDF 框架开关放在 `sdkconfig.defaults`。
+- 不要在功能实现 `.c` 文件中保留产品级硬编码值。
 
-## Error Handling and Logging
+## 错误处理与日志
 
-- Use `ESP_ERROR_CHECK` for must-succeed init paths unless graceful recovery is intentional.
-- Return `esp_err_t` or `bool` from component APIs when callers need to react to failure.
-- Use module-specific log tags and keep them stable.
-- Log state transitions and failures; avoid noisy per-loop logs in steady-state code.
+- 对必须成功的初始化路径，优先使用 `ESP_ERROR_CHECK`，除非明确希望优雅恢复。
+- 当调用方需要对失败作出反应时，组件 API 应返回 `esp_err_t` 或 `bool`。
+- 使用模块专属日志标签，并保持稳定。
+- 记录状态切换与失败；对稳定运行状态下的每轮循环日志要避免过度噪声。
 
-## Memory and Resource Rules
+## 内存与资源规则
 
-- Prefer explicit init/deinit ownership for buses, channels, buffers, and mount points.
-- Free or tear down resources in the same component that allocates them.
-- Do not hide ownership transfers across layers.
-- Avoid allocating large transient buffers on task stacks when heap or static storage is safer.
+- 对总线、通道、缓冲区与挂载点，优先采用明确的 init/deinit 所有权。
+- 资源应由分配它的组件负责释放或拆除。
+- 不要跨层隐藏资源所有权转移。
+- 当堆或静态存储更安全时，避免在任务栈上分配大型临时缓冲区。
 
-## UI Rules
+## UI 规则
 
-- Keep UI code focused on presentation, event handling, and calling service APIs.
-- Do not place raw networking, SPI, I2S, RMT, GPIO, or file-system transactions in UI files.
-- If a page needs data, add or extend a service API instead of reaching into another module's globals.
-- If a screen depends on periodic data, let the service own acquisition and the UI own presentation refresh.
+- UI 代码只关注展示、事件处理和调用 service API。
+- 不要在 UI 文件中放置原始网络、SPI、I2S、RMT、GPIO 或文件系统事务。
+- 如果页面需要数据，应新增或扩展 service API，而不是直接深入其他模块的全局变量。
+- 如果某个界面依赖周期性数据，应由 service 负责采集，UI 负责展示刷新。
 
-## Review Checklist
+## 评审检查清单
 
-Before considering a change complete, verify:
+在认为一项改动完成之前，请确认：
 
-- no new cross-layer relative includes were introduced
-- no business logic was pushed into `src/main.c`
-- no new feature constants were hardcoded in `.c` files
-- no UI file directly manipulates hardware-owned state
-- new tasks, queues, and globals have a clear owner
+- 没有新增跨层相对 include
+- 没有把业务逻辑塞进 `src/main.c`
+- 没有把新的功能常量硬编码进 `.c` 文件
+- 没有 UI 文件直接操纵硬件持有状态
+- 新增的任务、队列和全局变量都有清晰所有者

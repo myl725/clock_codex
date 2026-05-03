@@ -1,32 +1,32 @@
-# clock_codex Current Status
+# clock_codex 当前状态
 
-## Purpose
+## 目的
 
-This document captures the current implementation state of `clock_codex` so a new Codex session,
-another machine, or a future contributor can resume work quickly without relying on chat history.
+本文记录 `clock_codex` 当前的实现状态，方便新的 Codex 会话、另一台机器，或未来贡献者无需依赖聊天记录，就能快速恢复工作。
 
-Last updated for the milestone:
+本次更新对应的里程碑：
 
-- LVGL bring-up completed
-- ILI9341 display and XPT2046 touch migrated
-- speech work paused
-- WS2812 control path added
-- MAX98357A audio output bring-up completed
-- SD audio playback added for `WAV` and `MP3`
+- LVGL bring-up 已完成
+- ILI9341 显示与 XPT2046 触摸已迁移
+- 语音相关工作已暂停
+- 已增加 WS2812 控制路径
+- 已完成 MAX98357A 音频输出 bring-up
+- 已增加 `WAV` 与 `MP3` 的 SD 音频播放
+- 已通过 `OTG` 端口完成首次真实 USB 音箱播放验证
 
-## What Is Working
+## 当前可工作的部分
 
-- `LVGL 8.3.11` is integrated through PlatformIO `lib_deps`.
-- The project boots with a working `lvgl_task`, `lv_tick_inc()`, and display flush loop.
-- `ILI9341` display driver is migrated into `components/display`.
-- `XPT2046` touch driver is migrated into `components/touch`.
-- The current mainline app now boots into an LVGL control screen with `Lighting` and `Audio` tabs.
-- Basic touch stability fixes are already applied:
-  - signed coordinate math
-  - screen-bound clamping
-  - 3-sample median filtering
-  - repeated init guards
-- Governance documents and local skill are already present in:
+- `LVGL 8.3.11` 已通过 PlatformIO `lib_deps` 集成。
+- 项目可启动，且已有可工作的 `lvgl_task`、`lv_tick_inc()` 与显示 flush 循环。
+- `ILI9341` 显示驱动已迁移到 `components/display`。
+- `XPT2046` 触摸驱动已迁移到 `components/touch`。
+- 当前主线应用启动后会进入一个包含 `Lighting` 与 `Audio` 标签页的 LVGL 控制界面。
+- 已应用的基础触摸稳定性修复包括：
+  - 有符号坐标运算
+  - 屏幕边界钳制
+  - 3 样本中值滤波
+  - 重复初始化保护
+- 治理文档与本地 skill 已存在于以下位置：
   - `README.md`
   - `docs/architecture.md`
   - `docs/coding-rules.md`
@@ -36,135 +36,187 @@ Last updated for the milestone:
   - `docs/hardware-wiring.md`
   - `.codex/skills/clock-codex-governance/`
 
-## Audio / Speech Status
+## 音频 / 语音状态
 
-Speech-related implementation is still kept in the repository for reference, but it is not part of the
-current mainline build path.
+与语音相关的实现仍保留在仓库中以供参考，但它们不属于当前主线激活构建路径。
 
-Current state:
+当前状态：
 
 - `components/audio_input`
-  - contains the previous `INMP441` experiments
+  - 包含之前的 `INMP441` 实验
 - `components/app_services/app_speech_service.c`
-  - contains the previous `esp-sr` offline wake-word / command-word attempt
+  - 包含此前基于 `esp-sr` 的离线唤醒词 / 命令词尝试
 - `components/audio_output`
-  - now contains the active `MAX98357A` playback output path
-  - defaults to `44.1kHz` for tone playback and can be reconfigured at runtime for file playback
+  - 现在包含当前激活的 `MAX98357A` 播放输出路径
+  - 音调播放默认使用 `44.1kHz`，文件播放时可在运行期重配置
 - `components/app_services/app_music_service.c`
-  - now contains the active tone-playback baseline plus `Tone / SD Audio` playback control
-  - `SD Audio` mode now scans the SD root directory for playable `.wav` and `.mp3` files and lets the UI switch between them
+  - 现在包含当前有效的音调播放基线，以及 `Tone / SD Audio` 播放控制
+  - `SD Audio` 模式现在会扫描 SD 根目录中的可播放 `.wav` 与 `.mp3` 文件，并允许 UI 在它们之间切换
 - `components/app_services/app_music_wav.c`
-  - now contains the first-pass `16-bit PCM WAV` reader for music playback
+  - 现在包含用于音乐播放的首版 `16-bit PCM WAV` 读取器
 - `components/app_services/app_music_mp3.c`
-  - now contains the first-pass streaming MP3 decoder path for SD music playback
+  - 现在包含面向 SD 音乐播放的首版流式 MP3 解码路径
+- `components/app_services/app_music_playback_source.c`
+  - 现在负责 `Tone`、`SD Audio` 与当前 `USB Audio` 后端槽位的源后端选择
+- `components/app_services/app_music_usb_stream.c`
+  - 现在负责服务层侧的 USB PCM 环形缓冲区骨架，供未来原生 USB 音箱路径使用
+- `components/app_services/app_usb_audio_service.c`
+  - 现在负责安装 TinyUSB 设备栈、跟踪 USB 音频流状态，并将收到的立体声 PCM 转发到共享音乐服务 USB 缓冲区
+  - 现在使用 TinyUSB 的有界分块读取，而不再尝试把一个跨越多毫秒的突发音频一次性排进单包大小的栈缓冲区
+- `components/app_services/app_usb_audio_descriptors.c`
+  - 现在负责当前仅音箱输出的 USB Audio 描述符，用于 `OTG` bring-up 路径
 
-Current decision:
+当前决策：
 
-- speech work is paused
-- the mainline `src/main.c` no longer starts the speech stack
-- the current mainline build focus is display/touch + WS2812 + local SD music playback
-- the current WAV path expects `/sdcard/music.wav`
-- SD WAV playback now assumes a dedicated SPI bus:
-  - `SCK` on `GPIO18`
-  - `MISO` on `GPIO19`
-  - `MOSI` on `GPIO21`
-  - `CS` on `GPIO38`
-- the current SD music path supports `.wav` and `.mp3`
-- `TEST3.MP3` now plays through the current MP3 path
-- some MP3 files such as `TEST2.MP3` still fail early if the lightweight decoder cannot find a usable first audio frame
+- 语音工作已暂停
+- 当前主线的 `src/main.c` 不再启动语音栈
+- 当前主线构建重点是显示 / 触摸 + WS2812 + 本地 SD 音乐播放
+- 当前 WAV 路径默认期望 `/sdcard/music.wav`
+- 如果默认 WAV 文件缺失且已配置 Wi-Fi 凭据，服务层可以下载一个默认测试 WAV 到 SD 卡
+- 当前 SD WAV 播放假定使用独立 SPI 总线：
+  - `SCK` 在 `GPIO18`
+  - `MISO` 在 `GPIO19`
+  - `MOSI` 在 `GPIO21`
+  - `CS` 在 `GPIO38`
+- 当前 SD 音乐路径支持 `.wav` 与 `.mp3`
+- `TEST3.MP3` 已可通过当前 MP3 路径播放
+- 某些 MP3 文件，例如 `TEST2.MP3`，如果轻量解码器找不到可用的首个音频帧，仍会在早期失败
+- 当前音频栈已经被解耦到足以让 `Tone`、`SD Audio` 与未来 `USB Audio` 后端共享同一套输出协调器
+- 当前 USB 工作已经跨过首个硬件验证的播放里程碑：
+  - TinyUSB 会在 `app_usb_audio_service_init()` 中于启动时安装
+  - Windows 能通过 `OTG` 端口把开发板枚举为一个 USB 音频播放设备
+  - 主机可以打开音频流接口，并通过现有的 `MAX98357A` 输出路径发送可播放音频
+  - 服务任务现在会按数据包大小分块排空 TinyUSB 音频，并送入服务层自有的 USB PCM 环形缓冲区
+  - 播放仍然会等待 USB 帧缓冲积累到一定程度后才启动 `I2S` 输出路径
+  - 这条路径已经可工作，但质量仍处于 bring-up 级，而非成品级
 
-## Hardware Focus
+## 当前硬件重点
 
-Current active hardware focus:
+当前激活硬件重点：
 
-- display: `ILI9341`
-- touch: `XPT2046`
-- WS2812: `GPIO46`, software path added for effect/color testing
-- audio out: `MAX98357A` on `GPIO5/GPIO6/GPIO4`
-- SD card: software path now targets dedicated SPI pins `GPIO18/GPIO19/GPIO21/GPIO38`
+- 显示：`ILI9341`
+- 触摸：`XPT2046`
+- WS2812：`GPIO46`，已加入软件路径用于灯效 / 颜色测试
+- 音频输出：`MAX98357A`，引脚为 `GPIO5/GPIO6/GPIO4`
+- SD 卡：软件路径当前使用专用 SPI 引脚 `GPIO18/GPIO19/GPIO21/GPIO38`
 
-Paused hardware path:
+已暂停硬件路径：
 
 - `INMP441`
-- old speech experiments
+- 旧的语音实验
 
-## Current Build State
+## 当前构建状态
 
-Current mainline build status:
+当前主线构建状态：
 
-- speech-related components are excluded from the current build path
-- the active app is an LVGL control screen with lighting and SD audio controls
-- `pio run` succeeds on the current branch
-- `pio run -t upload` succeeds when `COM3` is free
+- 与语音相关的组件已排除在当前构建路径之外
+- 当前激活应用是一个同时包含灯光和 `Tone / SD Audio / USB Audio` 控制的 LVGL 界面
+- TinyUSB USB 音频设备初始化现在已纳入启动流程
+- 当前分支上 `pio run` 可成功执行
+- 只要 `COM3` 空闲，`pio run -t upload` 可成功执行
 
-Most recent successful mainline build characteristics:
+最近一次成功的主线构建特征：
 
-- RAM about `27.7%`
-- Flash about `35.6%`
+- RAM 约 `27.7%`
+- Flash 约 `35.6%`
 
-Current upload note:
+当前上传说明：
 
-- upload works through `COM3` when the board is present and no other tool is holding the port
+- 当开发板连接且没有其他工具占用端口时，可通过 `COM3` 上传
 
-## Known Blockers
+## 已知阻塞点
 
-### 1. Some MP3 files are still not decoder-friendly
+### 1. 某些 MP3 文件仍然不适合当前解码器
 
-Current observation:
+当前观察：
 
-- `TEST3.MP3` is now stable enough to open and play
-- `TEST2.MP3` still fails with an early `prime returned no audio` path in the lightweight MP3 decoder
+- `TEST3.MP3` 已经足够稳定，可打开并播放
+- `TEST2.MP3` 仍会在轻量级 MP3 解码器中走到很早的 `prime returned no audio` 失败路径
 
-That means the current `minimp3` integration is good enough for first-pass SD music playback, but it is not yet robust against every MP3 encoding variant.
+这意味着当前 `minimp3` 集成已经足够支撑首版 SD 音乐播放，但对所有 MP3 编码变体还不够健壮。
 
-### 2. Speech code is intentionally out of the mainline path
+### 2. 语音代码被有意移出主线路径
 
-This is not a bug.
+这不是 bug。
 
-It is an explicit project decision for now:
+这是当前阶段的明确项目决策：
 
-- do not spend more time on `INMP441` bring-up in the current thread
-- keep speech code only as reference
-- move implementation attention to `WS2812`
+- 不要在当前线程里继续花时间做 `INMP441` bring-up
+- 语音代码只保留作参考
+- 将实现注意力转向 `WS2812`
 
-## Recommended Next Steps
+### 3. 当前 SD 接线与长期 USB 音频方向冲突
 
-Resume work in this order:
+这是一个规划阻塞，而不是当前构建失败。
 
-1. reconnect the ESP32-S3 board and confirm `COM3`
-2. upload the current display/touch/WS2812/audio mainline build
-3. verify that:
-   - display still works
-   - touch still works
-   - the WS2812 control tab appears correctly
-   - effect switching works
-   - color switching works
-   - the audio tab can start and stop the tone cleanly
-   - `SD Audio` can play known-good `WAV` and `MP3` files such as `TEST3.MP3`
-4. improve MP3 compatibility:
-   - keep current `TEST3.MP3` path stable
-   - investigate why `TEST2.MP3` produces no usable priming frame
-   - decide whether to keep tuning `minimp3` or replace it with a more tolerant decoder
+当前原因：
 
-## WS2812 Direction
+- 项目希望转向原生 `ESP32-S3` USB 音频设备路径
+- 原生 USB 使用 `GPIO19/GPIO20`
+- 当前 SD 卡接线已经使用了 `GPIO19`
 
-Current implementation thread now includes:
+这意味着：
 
-- confirmed data pin: `GPIO46`
-- clean `bsp` -> `ws2812` -> `app_services` -> `app_ui` control path
-- test UI for:
-  - effect selection
-  - color selection
-  - off / solid / blink / breathe / rainbow behavior
-- clean `bsp` -> `audio_output` -> `app_services` -> `app_ui` path for audio
-- test UI for:
-  - 44.1kHz playback start/stop
-  - runtime sample-rate reconfiguration for file playback
-  - source switching between `Tone` and `SD Audio`
-  - tone selection or SD file selection
-- MAX98357A output validation
+- SD 仍然适合作为临时回归音源
+- 但当前 SD 硬件映射不应被视为长期音频架构的最终方案
 
-## Important Files
+### 4. USB 音频已可工作，但仍只是 bring-up 级质量
+
+当前观察：
+
+- 代码现在已经完成 TinyUSB 安装、发布音箱描述符集合，并具备首版可工作的音频控制回调
+- 代码已经包含数据包摄取与服务层自有 PCM 环形缓冲区，再交接到现有 `audio_output` 路径
+- 这条路径已经通过 `OTG` 端口在真实 Windows 主机上验证
+
+这意味着：
+
+- 软件边界已经建立，首轮播放也已打通
+- 但主机兼容性、长时间播放稳定性，以及围绕 USB / 本地音源控制的 UI 打磨仍需继续
+
+## 建议的后续步骤
+
+按以下顺序恢复工作：
+
+1. 重新连接 ESP32-S3 开发板，并确认 `COM3`
+2. 上传当前显示 / 触摸 / WS2812 / 音频主线构建
+3. 验证以下内容：
+   - 显示仍然正常
+   - 触摸仍然正常
+   - WS2812 控制标签页显示正确
+   - 灯效切换正常
+   - 颜色切换正常
+   - 音频标签页可干净地启动和停止音调
+   - `SD Audio` 能播放已知良好的 `WAV` 与 `MP3` 文件，例如 `TEST3.MP3`
+4. 转向 `OTG + TTL` 的 USB 音频验证：
+   - 保持 `TTL` 连接，用于日志与刷机
+   - 将 `OTG` 连接到主机 PC
+   - 检查主机是否将设备识别为 `Clock Codex USB Speaker`
+   - 观察是否出现 `tinyusb attached`、`set interface ...` 与 `usb stream started ...` 日志
+5. 当首次播放成功后：
+   - 检查数据包摄取计数器与 USB 环形缓冲区健康情况
+   - 如有需要，调优 underrun 或 overflow 行为
+   - 清理围绕 `USB Audio` 源选择的 UI 行为
+   - 一旦 SD 不再需要承担回归职责，就弱化或移除其产品级行为
+
+## WS2812 方向
+
+当前实现线程已经包含：
+
+- 已确认数据引脚：`GPIO46`
+- 干净的 `bsp` -> `ws2812` -> `app_services` -> `app_ui` 控制路径
+- 用于测试的 UI，支持：
+  - 灯效选择
+  - 颜色选择
+  - off / solid / blink / breathe / rainbow 行为
+- 干净的 `bsp` -> `audio_output` -> `app_services` -> `app_ui` 音频路径
+- 用于测试的 UI，支持：
+  - `44.1kHz` 播放启动 / 停止
+  - 文件播放时运行期采样率重配置
+  - `Tone` 与 `SD Audio` 间的源切换
+  - 音调或 SD 文件选择
+- MAX98357A 输出验证
+
+## 重要文件
 
 - `src/main.c`
 - `components/bsp/include/board_config.h`
@@ -176,25 +228,25 @@ Current implementation thread now includes:
 - `tools/configure_upload.py`
 - `tools/upload_via_flash_args.py`
 
-Reference-only speech files kept in repo:
+仓库中保留作参考的语音文件：
 
 - `components/audio_input/audio_input.c`
 - `components/app_services/app_speech_service.c`
-- `components/app_ui/app_ui.c`
 
-## Resume Notes
+## 恢复说明
 
-If a future session needs to continue from here, start by reading:
+如果未来某次会话需要从这里继续，请先阅读：
 
 1. `docs/current-status.md`
 2. `docs/architecture.md`
 3. `docs/versioning.md`
 4. `docs/runbook.md`
 5. `docs/hardware-wiring.md`
-6. `platformio.ini`
-7. `components/bsp/include/board_config.h`
+6. `docs/usb-audio-roadmap.md`
+7. `platformio.ini`
+8. `components/bsp/include/board_config.h`
 
-Then verify whether the intent is:
+然后确认当前意图是：
 
-- keep display/touch stable
-- or continue with the new `WS2812` task
+- 保持显示 / 触摸稳定
+- 还是继续推进音频重构与 USB 音频准备工作

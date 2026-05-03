@@ -2,110 +2,110 @@
 
 ---
 name: esp32-lvgl-project-rules
-description: Use when working on this ESP32-S3 embedded project built with PlatformIO, ESP-IDF, and LVGL. Enforce long-term project rules for architecture boundaries, UI integration, SquareLine workflow, coding style, module ownership, state management, concurrency, configuration handling, and code review expectations. Apply whenever creating, editing, reviewing, or restructuring code in this project.
+description: 用于处理这个基于 PlatformIO、ESP-IDF 与 LVGL 构建的 ESP32-S3 嵌入式项目。约束长期项目规则，包括架构边界、UI 集成、SquareLine 工作流、编码风格、模块所有权、状态管理、并发处理、配置管理以及代码评审预期。凡是在本项目中创建、编辑、评审或重构代码时，都应应用这些规则。
 ---
 
-# ESP32 LVGL Project Rules
+# ESP32 LVGL 项目规则
 
-## Core Architecture Rules
+## 核心架构规则
 
-- Treat the project as a layered embedded system with `drivers`, `services`, `app`, and `ui`.
-- Keep hardware access in `drivers`.
-- Keep business logic, network logic, periodic work, and state mutation in `services`.
-- Keep boot flow, shared state, and orchestration in `app`.
-- Keep page creation, rendering, and event forwarding in `ui`.
-- Do not collapse these boundaries for convenience.
+- 将项目视为一个分层的嵌入式系统，包含 `drivers`、`services`、`app` 和 `ui`。
+- 硬件访问保留在 `drivers` 层。
+- 业务逻辑、网络逻辑、周期性工作以及状态变更保留在 `services` 层。
+- 启动流程、共享状态和编排逻辑保留在 `app` 层。
+- 页面创建、渲染与事件转发保留在 `ui` 层。
+- 不要为了图省事而打破这些边界。
 
-## UI and SquareLine Rules
+## UI 与 SquareLine 规则
 
-- Treat SquareLine output as generated UI code only.
-- Keep generated files isolated under a dedicated generated UI area.
-- Do not place business logic, HTTP requests, sensor reads, Wi‑Fi callbacks, or hardware control into generated UI files.
-- Use presenters or controllers to bind application state to UI objects.
-- Let UI events forward commands to services instead of directly touching drivers.
-- Prefer state-driven rendering over imperative widget mutation scattered across modules.
+- 将 SquareLine 输出视为纯生成式 UI 代码。
+- 生成文件应隔离在专用的 generated UI 区域下。
+- 不要把业务逻辑、HTTP 请求、传感器读取、Wi-Fi 回调或硬件控制放进生成的 UI 文件。
+- 使用 presenter 或 controller 将应用状态绑定到 UI 对象。
+- 让 UI 事件把命令转发给 services，而不是直接操作 drivers。
+- 相比把命令式控件修改散落在多个模块中，更应优先采用基于状态驱动的渲染方式。
 
-## LVGL Threading Rules
+## LVGL 线程规则
 
-- Access LVGL only from the designated UI execution context.
-- Never call LVGL APIs directly from Wi‑Fi callbacks, HTTP callbacks, ISR paths, or service worker tasks.
-- Move cross-thread updates through state changes, queues, or explicit UI-side refresh mechanisms.
-- Avoid blocking operations inside LVGL timers or UI event handlers.
+- 仅在指定的 UI 执行上下文中访问 LVGL。
+- 永远不要从 Wi-Fi 回调、HTTP 回调、ISR 路径或 service worker 任务中直接调用 LVGL API。
+- 跨线程更新应通过状态变更、队列或显式的 UI 侧刷新机制来传递。
+- 避免在 LVGL 定时器或 UI 事件处理器中执行阻塞操作。
 
-## State Management Rules
+## 状态管理规则
 
-- Keep shared runtime state in a central `app_state`.
-- Do not introduce scattered writable global variables across modules.
-- Make each service the owner of its domain state.
-- Expose snapshots or getters instead of raw mutable globals where possible.
-- Distinguish clearly between:
-  - board constants
-  - runtime state
-  - persisted user configuration
+- 将共享运行时状态集中放在中心化的 `app_state` 中。
+- 不要在各模块之间引入分散的可写全局变量。
+- 让每个 service 成为其领域状态的唯一拥有者。
+- 尽量暴露快照或 getter，而不是原始可变全局变量。
+- 明确区分以下内容：
+  - 板级常量
+  - 运行时状态
+  - 持久化用户配置
 
-## Configuration and Persistence Rules
+## 配置与持久化规则
 
-- Do not hardcode user Wi‑Fi credentials, API keys, cities, or user preferences in source files.
-- Store persistent user-facing settings in NVS-backed configuration services.
-- Keep board-level constants in a dedicated board config header.
-- Keep default values explicit and centralized.
+- 不要在源码中硬编码用户 Wi-Fi 凭据、API Key、城市名或用户偏好。
+- 面向用户且需要持久化的设置应存放在基于 NVS 的配置服务中。
+- 板级常量保留在专门的 board config 头文件中。
+- 默认值应保持明确且集中管理。
 
-## Coding Style Rules
+## 编码风格规则
 
-- Use lowercase snake_case for file names and function names.
-- Use `_t` suffix for typedef types.
-- Use ALL_CAPS for macros and compile-time constants.
-- Use one declaration per line.
-- Minimize variable scope.
-- Mark file-local symbols `static` by default.
-- Keep public headers small and module-focused.
-- Split `init`, `start`, `stop`, and `get_snapshot` responsibilities cleanly.
-- Remove dead commented-out code instead of preserving it inline.
-- Prefer concise comments that explain why, not what.
-- Keep files UTF-8 encoded.
-- Do not leave large blocks of disabled legacy code in active source files.
+- 文件名与函数名使用小写蛇形命名。
+- typedef 类型使用 `_t` 后缀。
+- 宏与编译期常量使用全大写。
+- 每行只写一个声明。
+- 尽量缩小变量作用域。
+- 文件内局部符号默认加 `static`。
+- 对外公开头文件保持小而聚焦。
+- 将 `init`、`start`、`stop` 与 `get_snapshot` 的职责清晰分离。
+- 删除失效的注释代码，不要直接把它们留在源文件里。
+- 优先写简洁、解释“为什么”的注释，而不是解释“做了什么”。
+- 文件保持 UTF-8 编码。
+- 不要在活跃源码文件中保留大块被禁用的旧代码。
 
-## Module Ownership Rules
+## 模块所有权规则
 
-- Each module must have clear ownership of its state, resources, and lifecycle.
-- Do not initialize the same resource from multiple unrelated modules.
-- Do not let page initialization functions own hardware or service initialization.
-- Keep `init` order explicit and centralized in the boot path.
+- 每个模块都必须对自身状态、资源与生命周期有清晰所有权。
+- 不要让多个互不相关的模块初始化同一资源。
+- 不要让页面初始化函数持有硬件或服务初始化职责。
+- 保持 `init` 顺序明确，并集中在启动路径中管理。
 
-## Error Handling and Logging Rules
+## 错误处理与日志规则
 
-- Use a consistent `TAG` name per module.
-- Use `ESP_LOGE` for hard failures, `ESP_LOGW` for recoverable issues, and `ESP_LOGI` for important state transitions.
-- Do not silently ignore meaningful return values.
-- Treat network, weather, and sensor failures as recoverable unless they break a mandatory boot requirement.
-- Degrade gracefully instead of blocking the UI.
+- 每个模块使用一致的 `TAG` 名称。
+- 对硬失败使用 `ESP_LOGE`，对可恢复问题使用 `ESP_LOGW`，对重要状态切换使用 `ESP_LOGI`。
+- 不要静默忽略有意义的返回值。
+- 除非会破坏必须的启动要求，否则网络、天气和传感器故障应视为可恢复。
+- 要优雅降级，而不是把 UI 直接卡死。
 
-## Embedded Concurrency Rules
+## 嵌入式并发规则
 
-- Keep blocking work in services, not UI.
-- Use queues, event groups, or controlled state transitions for task communication.
-- Do not use arbitrary shared globals for cross-task signaling.
-- Guard shared mutable state explicitly when concurrent access exists.
-- Keep ISR code minimal and do not let ISR paths own business logic.
+- 阻塞型工作放在 services，不放在 UI。
+- 任务间通信使用队列、事件组或受控的状态切换。
+- 不要用随意的共享全局变量做跨任务信号。
+- 只要存在并发访问，就要显式保护共享可变状态。
+- ISR 代码应保持最小化，不要让 ISR 路径承载业务逻辑。
 
-## Review Rules
+## 评审规则
 
-When reviewing code in this project, prioritize findings about:
+在评审本项目代码时，优先关注以下问题：
 
-- architecture boundary violations
-- UI-thread violations
-- hidden coupling between UI and hardware
-- leaked writable globals
-- duplicated initialization ownership
-- blocking work in UI paths
-- business logic placed in SquareLine-generated files
-- hardcoded credentials or runtime config
-- unclear module ownership
-- missing graceful degradation paths
+- 架构边界是否被破坏
+- UI 线程规则是否被违反
+- UI 与硬件之间是否存在隐性耦合
+- 是否泄漏了可写全局变量
+- 是否出现重复的初始化所有权
+- UI 路径中是否存在阻塞工作
+- 业务逻辑是否被塞进 SquareLine 生成文件
+- 是否硬编码了凭据或运行时配置
+- 模块所有权是否不清晰
+- 是否缺少优雅降级路径
 
-## Preferred Project Direction
+## 推荐项目方向
 
-- Favor maintainability over short-term convenience.
-- Favor clear module boundaries over quick direct calls.
-- Favor explicit state flow over hidden side effects.
-- Favor generated-layout plus hand-written presenter logic over mixing everything into generated files.
+- 相比短期便利，更优先可维护性。
+- 相比快速直连调用，更优先清晰的模块边界。
+- 相比隐藏副作用，更优先显式状态流。
+- 相比把所有东西混进生成代码，更优先“生成布局 + 手写 presenter 逻辑”的方式。

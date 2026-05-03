@@ -18,6 +18,7 @@ typedef enum {
 typedef enum {
     APP_MUSIC_SOURCE_TONE = 0,
     APP_MUSIC_SOURCE_SD_WAV,
+    APP_MUSIC_SOURCE_USB_AUDIO,
     APP_MUSIC_SOURCE_COUNT,
 } app_music_source_t;
 
@@ -49,6 +50,15 @@ typedef struct {
     uint8_t last_failure_stage;
 } app_music_diag_info_t;
 
+typedef struct {
+    bool active;
+    uint32_t sample_rate_hz;
+    size_t buffered_frames;
+    size_t capacity_frames;
+    uint32_t underrun_count;
+    uint32_t overflow_count;
+} app_music_usb_audio_status_t;
+
 esp_err_t app_music_service_init(void);
 esp_err_t app_music_service_play(void);
 esp_err_t app_music_service_stop(void);
@@ -66,6 +76,14 @@ void app_music_service_get_wav_dropdown_options(
 );
 void app_music_service_get_snapshot(app_music_snapshot_t *out_snapshot);
 void app_music_service_get_diagnostics(app_music_diag_info_t *out_diag);
+esp_err_t app_music_service_usb_begin(uint32_t sample_rate_hz);
+esp_err_t app_music_service_usb_push_stereo(
+    const int16_t *samples,
+    size_t frame_count,
+    size_t *out_accepted_frames
+);
+void app_music_service_usb_end(void);
+void app_music_service_usb_get_status(app_music_usb_audio_status_t *out_status);
 void app_music_service_log_boot_diagnostics(void);
 const char *app_music_service_state_to_text(app_music_state_t state);
 const char *app_music_service_source_to_text(app_music_source_t source);
